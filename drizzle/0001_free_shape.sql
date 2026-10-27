@@ -1,0 +1,1 @@
+ALTER TABLE "devices" ADD COLUMN "fallback_sms_enc" text;

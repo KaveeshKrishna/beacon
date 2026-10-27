@@ -1,0 +1,19 @@
+# Normalize text files in the repository and keep platform-specific line endings
+# where they matter. Binary assets are never converted.
+* text=auto
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+gradlew text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.jar binary
+*.jks binary
+*.apk binary
+*.aab binary

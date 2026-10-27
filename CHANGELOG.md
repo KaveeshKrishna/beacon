@@ -1,0 +1,138 @@
+# Changelog
+
+All notable changes to Beacon are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
+
+Because Beacon handles location data and device control, security-relevant changes are called out explicitly.
+
+---
+
+## Unreleased
+
+Nothing yet. Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+---
+
+## 0.1.0 — 2026-10-24
+
+The first self-hosted release: a complete web dashboard, device API, and native Android client. Source-complete and build-verified; not independently audited. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before production use.
+
+### Added
+
+#### Web dashboard
+
+- Next.js 15 App Router application with a warm bone/ink design system, light/dark/system themes, and a responsive app shell.
+- Marketing, pricing-free landing, security, privacy, terms, and status pages.
+- Dashboard with device list, live map, location history, activity feed, commands, geofences, photos, and settings.
+- MapLibre GL JS with free OpenFreeMap `positron` and `dark` styles; no map API key. "Open in Google Maps" hand-off for directions.
+- PWA metadata, install prompt, icons, and Open Graph image.
+- Generated brand mark, favicon set, and app icons from `npm run icons`.
+
+#### Accounts and authentication
+
+- Email/password signup with Argon2id hashing via `hash-wasm`.
+- Email verification with 24-hour single-use tokens and resend limits.
+- Password reset with 60-minute single-use tokens; all other sessions are revoked on reset.
+- Opaque 256-bit sessions stored as HMAC-SHA-256 hashes, with `HttpOnly`, `Secure`, `SameSite=Lax`, and `__Host-` cookies in production.
+- Session listing, revocation, and "sign out everywhere".
+- TOTP MFA with replay protection, email OTP, and ten single-use recovery codes.
+- Pending-MFA challenge tokens that are short-lived and attempt-limited.
+- Password change flow that verifies the current password and revokes other sessions.
+- Account data export as JSON and cascading account deletion.
+- Security notification emails for password, MFA, and new-login events.
+
+#### Devices and tracking
+
+- One-use, 10-minute pairing codes with HMAC storage and atomic consumption.
+- QR code and `beacon://pair` deep link generation.
+- Per-device bearer tokens, HMAC-hashed at rest, with immediate revocation.
+- Batched location ingest with per-point UUID deduplication, coordinate validation, timestamp checks, and a 200-point/256 KB limit.
+- Last-known location preserved when a device is offline.
+- Heartbeat with battery, charging, network, SIM state, app version, and Android version.
+- Runtime device configuration: tracking profile, lost mode, offline threshold, and encrypted SMS fallback number.
+- Commands: locate, ring, lock, lost mode on/off, owner message, sync, and photo request; 24-hour expiry and acknowledgement states.
+- Geofences with enter/exit evaluation, baseline suppression, deduplicated events, and optional email alerts.
+- Offline, low-battery, and SIM-change alerts with per-device cooldowns and user opt-in.
+- Device activity feed, location range filters, and CSV/JSON export.
+
+#### Photos
+
+- Foreground, user-mediated photo request flow; no covert camera.
+- Device upload with JPEG magic-byte validation, 1.5 MB cap, 24-hour capture window, and command binding.
+- AES-256-GCM encryption at rest with per-device AAD.
+- Dashboard Photos tab with polling, lightbox, authenticated download, and delete.
+- Per-device cap of 20 photos and 30-day retention.
+
+#### Email
+
+- Provider abstraction for Relay and Resend with per-user priority: relay-first, resend-first, relay-only, resend-only.
+- One retry on retryable statuses (`408`, `425`, `429`, `5xx` and network errors), then failover to the next configured provider. Failover also occurs after a permanent rejection, unless a single-provider mode is selected.
+- Inline-styled HTML and plain-text templates for verification, reset, security, MFA, geofence, offline, low-battery, SIM-change, test, and account-deletion messages.
+- Delivery log with provider, status, latency, and truncated error; 90-day retention.
+- Development logging when no provider is configured, disabled in production.
+
+#### Security and operations
+
+- AES-256-GCM field encryption with context-bound AAD for TOTP secrets, SMS numbers, FCM tokens, and photos.
+- Database-backed fixed-window rate limits for auth, pairing, ingest, heartbeat, commands, photos, and test email.
+- Trusted-origin and JSON content-type checks on state-changing requests.
+- Strict CSP with a per-request nonce and `strict-dynamic`; HSTS, `nosniff`, frame denial, and a restrictive permissions policy.
+- Append-only audit log with hashed IPs and user agents; configurable retention.
+- Maintenance cron for expired sessions, tokens, pairing codes, rate limits, commands, locations, photos, email logs, geofence events, and audit rows, plus offline alerts.
+- Health endpoints: `/api/health/live` and `/api/health`.
+- Environment validation at boot with ranges for retention and session policy.
+- `vercel.json` daily cron, GitHub Actions CI, and Dependabot configuration.
+
+#### Android
+
+- Native Kotlin 2.2.21 / Jetpack Compose app for Android 8.0+ (API 26), targeting API 36.
+- Pairing screen with manual code, server override, and deep-link/QR prefill.
+- Home screen with protection checklist, queue status, last sync, lost mode, and manual locate/sync.
+- WorkManager periodic tracking with low/balanced/high profiles (60/30/15 minutes).
+- Lost-mode foreground location service with 30-second updates, 2-minute command polling, alarm, and persistent notice.
+- Encrypted SQLite offline queue (5,000-point cap, 200-point batches, ordered upload, duplicate-safe).
+- Android Keystore AES-GCM for the device token, queue payloads, SMS number, and owner message.
+- Commands for locate, sync, ring, lost mode, message, lock (device admin), and photo request.
+- User-mediated camera capture with EXIF rotation, downsampling, JPEG compression, and temp-file cleanup.
+- AndroidX `ExifInterface` for metadata parsing, avoiding the platform parser's known bugs on older releases.
+- Blocking release lint (`abortOnError`) and a lint step in CI.
+- Optional SMS fallback with a 15-minute floor and 10-minute fix-age limit.
+- Boot and package-replacement receiver; scheduler rehydration; lost-mode restart.
+- HTTPS-only `HttpURLConnection` client with no redirects, cookies, or token logging.
+- `FLAG_SECURE` release builds, backups disabled, and a minimal exported surface.
+- Optional release signing from `android/keystore.properties`.
+
+#### Documentation
+
+- `README.md`, `IMPLEMENTATION_PLAN.md`, and docs for architecture, threat model, API, deployment, Android, email, operations, limitations, and roadmap.
+- Security policy, contribution guide, code of conduct, third-party notices, and AGPL-3.0-or-later license.
+- `.env.example` with generation commands and placeholders only.
+- Sanitized examples throughout; no production domain, email, or credential in the repository.
+
+### Security notes
+
+- Device tokens, session tokens, pairing codes, email tokens, and recovery codes are stored only as keyed hashes.
+- TOTP secrets, SMS numbers, FCM tokens, and photos use AES-256-GCM with unique AAD contexts.
+- All device traffic is HTTPS with redirect rejection; the app trusts only system CAs.
+- The repository contains no personal domain or credential. Local integration notes are ignored.
+- Known residual risks are documented in [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md). No independent audit has been performed.
+
+### Verification
+
+- `npm run typecheck` — pass.
+- `npm run lint` — pass.
+- `npm test` — 40 tests across 5 files.
+- `npm run build` — pass, 58 routes.
+- `./gradlew :app:assembleDebug :app:assembleRelease` — pass; release APK is unsigned without `keystore.properties`.
+- `./gradlew :app:lintRelease` — pass; 0 errors, 36 warnings.
+- Emulator (API 36.1, Pixel 7): pairing, home, photo request, and lost-mode screens render without a crash.
+
+### Known limitations
+
+- FCM is not wired into the Android app; command latency is bounded by periodic sync or lost mode.
+- No live-database end-to-end tests in CI.
+- No Android unit or instrumentation tests yet.
+- No physical-device field test or independent security audit.
+- Photo uploads have no durable retry queue.
+- Offline alerts depend on an external scheduler for sub-daily cadence.
+
+See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).

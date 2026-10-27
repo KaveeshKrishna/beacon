@@ -1,0 +1,25 @@
+package dev.beacon.app.core
+
+data class BeaconState(
+    val paired: Boolean,
+    val authRevoked: Boolean,
+    val deviceName: String,
+    val ownerName: String,
+    val serverUrl: String,
+    val lostMode: Boolean,
+    val trackingProfile: String,
+    val lastSyncAt: Long,
+    val lastError: String?,
+    val queuedCount: Int,
+    val fallbackSmsMasked: String?,
+    val pendingPhoto: PendingPhoto?,
+    val ownerMessage: String?,
+    val fineLocation: Boolean,
+    val coarseLocation: Boolean,
+    val backgroundLocation: Boolean,
+    val notifications: Boolean,
+    val sms: Boolean,
+    val camera: Boolean,
+    val deviceAdmin: Boolean,
+    val batteryUnrestricted: Boolean,
+)

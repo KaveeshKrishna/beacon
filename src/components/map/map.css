@@ -1,0 +1,18 @@
+/* MapLibre overrides that need to sit outside Tailwind layers. */
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  min-height: 24px;
+}
+
+.maplibregl-ctrl-top-right {
+  top: 8px;
+  right: 8px;
+}
+
+.maplibregl-ctrl-group {
+  border-radius: 8px !important;
+  overflow: hidden;
+}
+
+.maplibregl-ctrl-bottom-right {
+  z-index: 2;
+}

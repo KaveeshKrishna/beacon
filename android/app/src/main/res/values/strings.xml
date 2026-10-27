@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Beacon</string>
+    <string name="device_admin_label">Beacon device lock</string>
+    <string name="device_admin_description">Allows a signed-in Beacon account to lock this device when you explicitly send a lock command. Beacon cannot erase the device, reset the password or access your data through this permission.</string>
+
+    <string name="channel_tracking_name">Background location</string>
+    <string name="channel_tracking_description">Shows when Beacon is keeping a live location session open.</string>
+    <string name="channel_alerts_name">Remote actions</string>
+    <string name="channel_alerts_description">Alarms, messages and evidence requests sent from your Beacon account.</string>
+    <string name="channel_lost_name">Lost mode</string>
+    <string name="channel_lost_description">Persistent lost-mode status and the device alarm.</string>
+
+    <string name="notification_tracking_title">Beacon live tracking</string>
+    <string name="notification_tracking_text">Sharing location with your Beacon account.</string>
+    <string name="notification_lost_title">Lost mode is active</string>
+    <string name="notification_lost_text">This device is being tracked by its owner.</string>
+    <string name="notification_action_stop">Stop</string>
+    <string name="notification_action_open">Open</string>
+    <string name="notification_action_silence">Silence alarm</string>
+    <string name="notification_action_photo">Take photo</string>
+
+    <string name="channel_alarm_name">Alarm</string>
+    <string name="channel_alarm_description">The remote alarm and lost-mode sound.</string>
+    <string name="notification_alarm_title">Beacon alarm</string>
+    <string name="notification_alarm_text">The alarm was started from your Beacon account.</string>
+    <string name="notification_message_title">Message from your Beacon account</string>
+    <string name="notification_photo_title">Photo requested</string>
+    <string name="notification_photo_text">Open Beacon to take and upload a photo for this device.</string>
+    <string name="notification_revoked_title">Device access revoked</string>
+    <string name="notification_revoked_text">This device was unpaired from its Beacon account. Open the app to pair again.</string>
+</resources>
