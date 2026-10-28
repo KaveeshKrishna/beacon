@@ -57,9 +57,11 @@ class TrackingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val container = app.container
+        val interval = container.prefs.effectiveIntervalMinutes()
         if (container.prefs.pairing() == null ||
             container.prefs.authRevoked ||
-            !container.prefs.lostMode
+            (!container.prefs.lostMode &&
+                interval >= dev.beacon.app.location.TrackingScheduler.MIN_PERIODIC_MINUTES)
         ) {
             stopSelf()
             return START_NOT_STICKY
@@ -89,7 +91,12 @@ class TrackingService : Service() {
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
                 val now = System.currentTimeMillis()
-                if (now - lastSyncAttempt.get() < MIN_SYNC_GAP_MS) return
+                val gap = if (app.container.prefs.lostMode) {
+                    LIVE_GAP_MS
+                } else {
+                    intervalMs()
+                }
+                if (now - lastSyncAttempt.get() < gap) return
                 lastSyncAttempt.set(now)
                 val point = app.container.sampler.fromLocation(location)
                 scope.launch {
@@ -146,16 +153,18 @@ class TrackingService : Service() {
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
             while (isActive) {
-                delay(POLL_INTERVAL_MS)
                 app.container.syncEngine.run(SyncTrigger.COMMAND_POLL)
+                delay(intervalMs())
             }
         }
     }
 
+    private fun intervalMs(): Long =
+        app.container.prefs.effectiveIntervalMinutes().coerceIn(1, 1440) * 60_000L
+
     companion object {
         private const val UPDATE_INTERVAL_MS = 30_000L
-        private const val MIN_SYNC_GAP_MS = 20_000L
-        private const val POLL_INTERVAL_MS = 2 * 60_000L
+        private const val LIVE_GAP_MS = 30_000L
 
         fun start(context: Context) {
             val intent = Intent(context, TrackingService::class.java)

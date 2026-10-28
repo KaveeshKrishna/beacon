@@ -16,7 +16,7 @@ class BootReceiver : BroadcastReceiver() {
         }
         val prefs = AppPreferences(context)
         if (prefs.pairing() == null || prefs.authRevoked) return
-        TrackingScheduler.schedule(context, prefs.trackingProfile)
+        TrackingScheduler.scheduleFromPreferences(context, prefs)
         TrackingScheduler.syncSoon(context)
         if (prefs.lostMode) {
             try {

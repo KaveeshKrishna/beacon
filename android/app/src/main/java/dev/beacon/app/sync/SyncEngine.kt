@@ -255,7 +255,7 @@ class SyncEngine(
         prefs.fallbackSmsNumber = config.fallbackSmsNumber
         if (prefs.trackingProfile != config.trackingProfile) {
             prefs.trackingProfile = config.trackingProfile
-            TrackingScheduler.schedule(context, config.trackingProfile)
+            TrackingScheduler.scheduleFromPreferences(context, prefs)
         }
         if (prefs.lostMode != config.lostMode) {
             prefs.lostMode = config.lostMode

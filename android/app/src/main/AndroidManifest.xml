@@ -91,6 +91,14 @@
             android:exported="false" />
 
         <receiver
+            android:name=".work.SimStateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.SIM_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".security.BeaconDeviceAdminReceiver"
             android:description="@string/device_admin_description"
             android:exported="true"

@@ -271,9 +271,13 @@ fun SectionHeader(
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(text = title, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f, fill = false),
+        )
         if (detail != null) {
             MonoLabel(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -332,10 +336,24 @@ fun ChecklistRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp),
             )
+            if (!done && actionLabel != null && onAction != null) {
+                // Kept inside the text column so a long label can never
+                // squeeze or overlap the description on narrow screens.
+                TextButton(
+                    onClick = onAction,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 0.dp,
+                        vertical = 0.dp,
+                    ),
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    Text(actionLabel, style = MaterialTheme.typography.labelMedium)
+                }
+            }
         }
-        Spacer(Modifier.width(10.dp))
-        when {
-            done -> Row(
+        if (done) {
+            Spacer(Modifier.width(10.dp))
+            Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -346,9 +364,6 @@ fun ChecklistRow(
                     modifier = Modifier.size(15.dp),
                 )
                 MonoLabel("On", color = Positive)
-            }
-            actionLabel != null && onAction != null -> TextButton(onClick = onAction) {
-                Text(actionLabel, style = MaterialTheme.typography.labelMedium)
             }
         }
     }

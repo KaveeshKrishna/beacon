@@ -1,6 +1,7 @@
 package dev.beacon.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.BatteryFull
 import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Map
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.AlertDialog
@@ -43,6 +46,7 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -105,6 +109,8 @@ fun BeaconApp(
     onOpenPrivacy: () -> Unit,
     onOpenSettings: () -> Unit,
     onTakePhoto: () -> Unit,
+    onSyncIntervalChanged: (Int) -> Unit,
+    onAllowScreenshotsChanged: (Boolean) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pairingState by viewModel.pairing.collectAsStateWithLifecycle()
@@ -179,6 +185,8 @@ fun BeaconApp(
                         onOpenPrivacy = onOpenPrivacy,
                         onOpenSettings = onOpenSettings,
                         onTakePhoto = onTakePhoto,
+                        onSyncIntervalChanged = viewModel::setSyncInterval,
+                        onAllowScreenshotsChanged = onAllowScreenshotsChanged,
                         onDismissPhoto = viewModel::dismissPhotoRequest,
                         onReturnToLost = { ownerControls = false },
                         onUnpair = { viewModel.unpair {} },
@@ -392,12 +400,15 @@ private fun HomeScreen(
     onOpenPrivacy: () -> Unit,
     onOpenSettings: () -> Unit,
     onTakePhoto: () -> Unit,
+    onSyncIntervalChanged: (Int) -> Unit,
+    onAllowScreenshotsChanged: (Boolean) -> Unit,
     onDismissPhoto: () -> Unit,
     onReturnToLost: () -> Unit,
     onUnpair: () -> Unit,
     onResetPairing: () -> Unit,
 ) {
     var showUnpair by rememberSaveable { mutableStateOf(false) }
+    var showInterval by rememberSaveable { mutableStateOf(false) }
     val pendingPhoto = state.pendingPhoto?.takeIf { it.expiresAt > System.currentTimeMillis() }
     val statusText = when {
         state.authRevoked -> "Revoked"
@@ -672,6 +683,34 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.height(26.dp))
+        SectionHeader("Check-in")
+        Spacer(Modifier.height(9.dp))
+        BeaconCard {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "How often this phone uploads its location and asks the server for new commands.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                BeaconOutlinedButton(
+                    text = intervalLabel(state.syncIntervalMinutes),
+                    onClick = { showInterval = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = Icons.Rounded.Schedule,
+                )
+                if (state.syncIntervalMinutes in 1 until 15) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Intervals under 15 minutes run through a foreground service, so Android keeps a notification visible. Battery use rises.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Warning,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(26.dp))
         SectionHeader("Device")
         Spacer(Modifier.height(9.dp))
         BeaconCard {
@@ -687,6 +726,34 @@ private fun HomeScreen(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
                 )
                 InfoRow("App version", BuildConfig.VERSION_NAME)
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 15.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 15.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Allow screenshots",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "Off by default, because screenshots and the recent-apps preview can expose coordinates.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = state.allowScreenshots,
+                        onCheckedChange = onAllowScreenshotsChanged,
+                    )
+                }
             }
         }
 
@@ -760,6 +827,64 @@ private fun HomeScreen(
             },
         )
     }
+
+    if (showInterval) {
+        AlertDialog(
+            onDismissRequest = { showInterval = false },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text("Check-in interval", style = MaterialTheme.typography.titleLarge)
+            },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Automatic follows the profile set in the dashboard. Fixed intervals override it on this phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    listOf(0, 1, 2, 5, 15, 30, 60).forEach { minutes ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showInterval = false
+                                    onSyncIntervalChanged(minutes)
+                                }
+                                .padding(vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                intervalLabel(minutes),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (state.syncIntervalMinutes == minutes) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = Accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showInterval = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+}
+
+private fun intervalLabel(minutes: Int): String = when (minutes) {
+    0 -> "Automatic"
+    1 -> "Every minute"
+    else -> "Every $minutes minutes"
 }
 
 @Composable

@@ -80,12 +80,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (!BuildConfig.DEBUG) {
-            window.setFlags(
-                WindowManager.LayoutParams.FLAG_SECURE,
-                WindowManager.LayoutParams.FLAG_SECURE,
-            )
-        }
+        applyScreenshotPolicy()
         viewModel.handleDeepLink(intent?.data)
         setContent {
             BeaconApp(
@@ -100,6 +95,26 @@ class MainActivity : ComponentActivity() {
                 onOpenPrivacy = ::openPrivacy,
                 onOpenSettings = ::openAppSettings,
                 onTakePhoto = ::requestCamera,
+                onSyncIntervalChanged = viewModel::setSyncInterval,
+                onAllowScreenshotsChanged = { enabled ->
+                    viewModel.setAllowScreenshots(enabled)
+                    applyScreenshotPolicy()
+                },
+            )
+        }
+    }
+
+    private fun applyScreenshotPolicy() {
+        val allow = (application as BeaconApplication)
+            .container
+            .prefs
+            .allowScreenshots
+        if (allow) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE,
             )
         }
     }

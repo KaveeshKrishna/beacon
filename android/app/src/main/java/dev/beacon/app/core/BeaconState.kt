@@ -8,6 +8,8 @@ data class BeaconState(
     val serverUrl: String,
     val lostMode: Boolean,
     val trackingProfile: String,
+    val syncIntervalMinutes: Int,
+    val allowScreenshots: Boolean,
     val lastSyncAt: Long,
     val lastError: String?,
     val queuedCount: Int,

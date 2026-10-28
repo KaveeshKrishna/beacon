@@ -132,7 +132,7 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                     _pairing.value = PairingUiState()
-                    TrackingScheduler.schedule(app, container.prefs.trackingProfile)
+                    TrackingScheduler.scheduleFromPreferences(app, container.prefs)
                     TrackingScheduler.syncSoon(app)
                     container.refresh()
                     _feedback.value = Feedback("Device paired. Grant the permissions below.", false)
@@ -147,6 +147,25 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     fun syncNow() = runSync("Sync now", SyncTrigger.COMMAND_POLL)
 
     fun locateNow() = runSync("Locate now", SyncTrigger.MANUAL)
+
+    fun setSyncInterval(minutes: Int) {
+        container.prefs.syncIntervalMinutes = minutes
+        TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+        container.refresh()
+        _feedback.value = Feedback(
+            if (minutes == 0) {
+                "Check-in set to automatic."
+            } else {
+                "Check-in set to every $minutes minute${if (minutes == 1) "" else "s"}."
+            },
+            false,
+        )
+    }
+
+    fun setAllowScreenshots(enabled: Boolean) {
+        container.prefs.allowScreenshots = enabled
+        container.refresh()
+    }
 
     private fun runSync(label: String, trigger: SyncTrigger) {
         if (_busyAction.value != null) return

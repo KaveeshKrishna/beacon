@@ -7,6 +7,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@/components/map/map.css";
 
+// MapLibre 6 derives its worker URL from `import.meta.url`. Inside the Next
+// bundle that resolves to the document URL, so the worker request comes back
+// as HTML and the map never finishes loading. The worker is copied into
+// /public by scripts/copy-maplibre-worker.mjs at install time.
+maplibregl.setWorkerUrl("/maplibre/maplibre-gl-worker.js");
+
 export type MapPoint = {
   latitude: number;
   longitude: number;

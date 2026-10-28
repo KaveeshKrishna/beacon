@@ -72,6 +72,42 @@ class AppPreferences(context: Context) {
         get() = normalizeProfile(prefs.getString(KEY_TRACKING_PROFILE, null))
         set(value) = prefs.edit { putString(KEY_TRACKING_PROFILE, normalizeProfile(value)) }
 
+    /**
+     * 0 means "automatic": follow the server profile and, once geofences are
+     * configured, fall back to the slow interval while the device is inside
+     * one. Any other value is a user-chosen number of minutes.
+     */
+    var syncIntervalMinutes: Int
+        get() = prefs.getInt(KEY_SYNC_INTERVAL, 0).coerceIn(0, 1440)
+        set(value) = prefs.edit { putInt(KEY_SYNC_INTERVAL, value.coerceIn(0, 1440)) }
+
+    fun effectiveIntervalMinutes(): Int {
+        val chosen = syncIntervalMinutes
+        if (chosen > 0) return chosen
+        return when (trackingProfile) {
+            "low" -> 60
+            "high" -> 15
+            else -> 30
+        }
+    }
+
+    /**
+     * Bookkeeping for WorkManager: changing WorkManager's period with
+     * ExistingPeriodicWorkPolicy.UPDATE keeps the original schedule, so the
+     * scheduler re-enqueues only when the requested interval really changed.
+     */
+    var scheduledIntervalMinutes: Int
+        get() = prefs.getInt(KEY_SCHEDULED_INTERVAL, -1)
+        set(value) = prefs.edit { putInt(KEY_SCHEDULED_INTERVAL, value) }
+
+    /**
+     * Screenshots and the recent-apps thumbnail are blocked by default because
+     * they can leak coordinates. The owner can opt in from the app.
+     */
+    var allowScreenshots: Boolean
+        get() = prefs.getBoolean(KEY_ALLOW_SCREENSHOTS, false)
+        set(value) = prefs.edit { putBoolean(KEY_ALLOW_SCREENSHOTS, value) }
+
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
@@ -162,6 +198,9 @@ class AppPreferences(context: Context) {
         const val KEY_AUTH_REVOKED = "auth_revoked"
         const val KEY_LOST_MODE = "lost_mode"
         const val KEY_TRACKING_PROFILE = "tracking_profile"
+        const val KEY_SYNC_INTERVAL = "sync_interval_minutes"
+        const val KEY_SCHEDULED_INTERVAL = "scheduled_interval_minutes"
+        const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
         const val KEY_LAST_SYNC = "last_sync_at"
         const val KEY_LAST_HEARTBEAT = "last_heartbeat_at"
         const val KEY_LAST_SMS = "last_sms_at"

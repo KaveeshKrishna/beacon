@@ -2,6 +2,8 @@ package dev.beacon.app
 
 import android.app.Application
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -30,10 +32,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 class BeaconApplication : Application() {
     lateinit var container: AppContainer
         private set
+
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val lastNetworkFlush = AtomicLong(0L)
 
     override fun onCreate() {
         super.onCreate()
@@ -41,7 +47,7 @@ class BeaconApplication : Application() {
         NotificationHelper.createChannels(this)
         val prefs = container.prefs
         if (prefs.pairing() != null && !prefs.authRevoked) {
-            TrackingScheduler.schedule(this, prefs.trackingProfile)
+            TrackingScheduler.scheduleFromPreferences(this, prefs)
             if (prefs.lostMode) {
                 try {
                     TrackingService.start(this)
@@ -50,7 +56,43 @@ class BeaconApplication : Application() {
                 }
             }
         }
+        watchConnectivity()
         container.refresh()
+    }
+
+    /**
+     * CONNECTIVITY_CHANGE is no longer delivered to manifest receivers on
+     * Android 8+, so the supported way to notice that a network (Wi-Fi, a
+     * replacement SIM, a hotspot) came back is a runtime NetworkCallback.
+     *
+     * It lives for the process lifetime. Together with the periodic worker
+     * and the foreground service this covers the cases where the app is
+     * alive; a device that is fully powered off cannot report anything.
+     */
+    private fun watchConnectivity() {
+        if (networkCallback != null) return
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val prefs = container.prefs
+                if (prefs.pairing() == null || prefs.authRevoked) return
+                val now = System.currentTimeMillis()
+                val previous = lastNetworkFlush.get()
+                if (now - previous < NETWORK_FLUSH_GAP_MS) return
+                if (!lastNetworkFlush.compareAndSet(previous, now)) return
+                TrackingScheduler.syncSoon(this@BeaconApplication)
+            }
+        }
+        try {
+            manager.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (_: Exception) {
+            // Normal periodic scheduling still flushes the queue.
+        }
+    }
+
+    private companion object {
+        const val NETWORK_FLUSH_GAP_MS = 15_000L
     }
 }
 
@@ -100,6 +142,8 @@ class AppContainer(context: Context) {
             serverUrl = pairing?.serverUrl.orEmpty(),
             lostMode = prefs.lostMode,
             trackingProfile = prefs.trackingProfile,
+            syncIntervalMinutes = prefs.syncIntervalMinutes,
+            allowScreenshots = prefs.allowScreenshots,
             lastSyncAt = prefs.lastSyncAt,
             lastError = prefs.lastError,
             queuedCount = runCatching { queue.count() }.getOrDefault(0),
