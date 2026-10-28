@@ -35,10 +35,12 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Sms
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -68,6 +70,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -117,6 +120,7 @@ fun BeaconApp(
     val feedback by viewModel.feedback.collectAsStateWithLifecycle()
     val busyAction by viewModel.busyAction.collectAsStateWithLifecycle()
     val capture by viewModel.capture.collectAsStateWithLifecycle()
+    val update by viewModel.update.collectAsStateWithLifecycle()
 
     val systemDark = isSystemInDarkTheme()
     var ownerControls by rememberSaveable { mutableStateOf(false) }
@@ -187,6 +191,11 @@ fun BeaconApp(
                         onTakePhoto = onTakePhoto,
                         onSyncIntervalChanged = viewModel::setSyncInterval,
                         onAllowScreenshotsChanged = onAllowScreenshotsChanged,
+                        update = update,
+                        onCheckForUpdates = { viewModel.checkForUpdates() },
+                        onDownloadUpdate = viewModel::downloadUpdate,
+                        onInstallUpdate = viewModel::installUpdate,
+                        onDismissUpdate = viewModel::dismissUpdate,
                         onDismissPhoto = viewModel::dismissPhotoRequest,
                         onReturnToLost = { ownerControls = false },
                         onUnpair = { viewModel.unpair {} },
@@ -402,6 +411,11 @@ private fun HomeScreen(
     onTakePhoto: () -> Unit,
     onSyncIntervalChanged: (Int) -> Unit,
     onAllowScreenshotsChanged: (Boolean) -> Unit,
+    update: UpdateUiState,
+    onCheckForUpdates: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
     onDismissPhoto: () -> Unit,
     onReturnToLost: () -> Unit,
     onUnpair: () -> Unit,
@@ -682,6 +696,86 @@ private fun HomeScreen(
             }
         }
 
+        if (update.info != null) {
+            val info = update.info
+            Spacer(Modifier.height(26.dp))
+            SectionHeader("App update")
+            Spacer(Modifier.height(9.dp))
+            BeaconCard {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.SystemUpdate,
+                            contentDescription = null,
+                            tint = Accent,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Beacon ${info.versionName} is available",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                "This phone runs ${BuildConfig.VERSION_NAME}.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (info.notes.isNotBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            info.notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 5,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.height(13.dp))
+                    when {
+                        update.downloading -> {
+                            LinearProgressIndicator(
+                                progress = { update.progress / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Accent,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Downloading ${update.progress}%",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        update.readyToInstall -> BeaconButton(
+                            text = "Install update",
+                            onClick = onInstallUpdate,
+                            modifier = Modifier.fillMaxWidth(),
+                            icon = Icons.Rounded.SystemUpdate,
+                        )
+                        else -> BeaconButton(
+                            text = "Download update",
+                            onClick = onDownloadUpdate,
+                            modifier = Modifier.fillMaxWidth(),
+                            icon = Icons.Rounded.SystemUpdate,
+                        )
+                    }
+                    if (update.error != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            update.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Danger,
+                        )
+                    }
+                    TextButton(onClick = onDismissUpdate) {
+                        Text("Later", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(26.dp))
         SectionHeader("Check-in")
         Spacer(Modifier.height(9.dp))
@@ -752,6 +846,19 @@ private fun HomeScreen(
                     Switch(
                         checked = state.allowScreenshots,
                         onCheckedChange = onAllowScreenshotsChanged,
+                    )
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 15.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
+                )
+                Box(modifier = Modifier.padding(15.dp)) {
+                    BeaconOutlinedButton(
+                        text = "Check for updates",
+                        onClick = onCheckForUpdates,
+                        modifier = Modifier.fillMaxWidth(),
+                        loading = update.checking,
+                        icon = Icons.Rounded.SystemUpdate,
                     )
                 }
             }

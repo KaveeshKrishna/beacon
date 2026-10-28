@@ -15,6 +15,10 @@ import dev.beacon.app.network.ApiResult
 import dev.beacon.app.notifications.NotificationHelper
 import dev.beacon.app.sync.SyncEngine
 import dev.beacon.app.sync.SyncTrigger
+import dev.beacon.app.update.InstallResult
+import dev.beacon.app.update.UpdateCheck
+import dev.beacon.app.update.UpdateChecker
+import dev.beacon.app.update.UpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +48,15 @@ sealed interface CaptureState {
     data object Working : CaptureState
 }
 
+data class UpdateUiState(
+    val checking: Boolean = false,
+    val info: UpdateInfo? = null,
+    val downloading: Boolean = false,
+    val progress: Int = 0,
+    val readyToInstall: Boolean = false,
+    val error: String? = null,
+)
+
 class BeaconViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as BeaconApplication
     private val container = app.container
@@ -62,8 +75,13 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     private val _capture = MutableStateFlow<CaptureState>(CaptureState.Idle)
     val capture: StateFlow<CaptureState> = _capture.asStateFlow()
 
+    private val checker = UpdateChecker(app)
+    private val _update = MutableStateFlow(UpdateUiState())
+    val update: StateFlow<UpdateUiState> = _update.asStateFlow()
+
     init {
         cleanupExpiredPhoto()
+        autoCheckForUpdates()
     }
 
     fun refresh() {
@@ -135,6 +153,7 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                     TrackingScheduler.scheduleFromPreferences(app, container.prefs)
                     TrackingScheduler.syncSoon(app)
                     container.refresh()
+                    checkForUpdates(manual = false)
                     _feedback.value = Feedback("Device paired. Grant the permissions below.", false)
                 }
                 is ApiResult.Failure -> {
@@ -165,6 +184,124 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     fun setAllowScreenshots(enabled: Boolean) {
         container.prefs.allowScreenshots = enabled
         container.refresh()
+    }
+
+    private fun autoCheckForUpdates() {
+        if (container.prefs.pairing() == null) return
+        val last = container.prefs.lastUpdateCheckAt
+        if (System.currentTimeMillis() - last < UPDATE_CHECK_GAP_MS) return
+        checkForUpdates(manual = false)
+    }
+
+    fun checkForUpdates(manual: Boolean = true) {
+        if (_update.value.checking || _update.value.downloading) return
+        val pairing = container.prefs.pairing()
+        if (pairing == null) {
+            if (manual) _feedback.value = Feedback("Pair this device first.", true)
+            return
+        }
+        _update.update { it.copy(checking = true, error = null) }
+        container.prefs.lastUpdateCheckAt = System.currentTimeMillis()
+        viewModelScope.launch {
+            try {
+                when (val result = checker.check(pairing.serverUrl)) {
+                    UpdateCheck.Disabled -> {
+                        _update.value = UpdateUiState()
+                        if (manual) {
+                            _feedback.value = Feedback(
+                                "This server does not publish Android updates.",
+                                false,
+                            )
+                        }
+                    }
+                    UpdateCheck.UpToDate -> {
+                        _update.value = UpdateUiState()
+                        if (manual) {
+                            _feedback.value = Feedback(
+                                "Beacon is up to date (${BuildConfig.VERSION_NAME}).",
+                                false,
+                            )
+                        }
+                    }
+                    is UpdateCheck.Available -> {
+                        val ignored = container.prefs.ignoredUpdateVersion
+                        if (!manual && result.info.versionName == ignored) {
+                            _update.value = UpdateUiState()
+                        } else {
+                            val cached = withContext(Dispatchers.IO) {
+                                checker.cachedFile(result.info)
+                            }
+                            _update.value = UpdateUiState(
+                                info = result.info,
+                                readyToInstall = cached != null,
+                                progress = if (cached != null) 100 else 0,
+                            )
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                val message = error.message ?: "The update check failed."
+                _update.value = UpdateUiState(error = if (manual) message else null)
+                if (manual) _feedback.value = Feedback(message, true)
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val info = _update.value.info ?: return
+        if (_update.value.downloading) return
+        _update.update { it.copy(downloading = true, progress = 0, error = null) }
+        viewModelScope.launch {
+            try {
+                checker.download(info) { progress ->
+                    _update.update { it.copy(progress = progress) }
+                }
+                _update.update {
+                    it.copy(downloading = false, readyToInstall = true, progress = 100)
+                }
+            } catch (error: Exception) {
+                _update.update {
+                    it.copy(
+                        downloading = false,
+                        progress = 0,
+                        error = error.message ?: "The update could not be downloaded.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun installUpdate() {
+        val info = _update.value.info ?: return
+        viewModelScope.launch {
+            val file = withContext(Dispatchers.IO) { checker.cachedFile(info) }
+            if (file == null) {
+                _update.update {
+                    it.copy(error = "Download the update again.", readyToInstall = false)
+                }
+                return@launch
+            }
+            when (val result = checker.install(file)) {
+                InstallResult.Started -> Unit
+                is InstallResult.NeedsPermission -> {
+                    try {
+                        app.startActivity(result.settingsIntent)
+                    } catch (_: Exception) {
+                        _update.update {
+                            it.copy(
+                                error = "Allow installing unknown apps for Beacon in system settings.",
+                            )
+                        }
+                    }
+                }
+                is InstallResult.Failed -> _update.update { it.copy(error = result.message) }
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        _update.value.info?.let { container.prefs.ignoredUpdateVersion = it.versionName }
+        _update.value = UpdateUiState()
     }
 
     private fun runSync(label: String, trigger: SyncTrigger) {
@@ -316,4 +453,8 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
             .joinToString(" ")
             .ifBlank { "Android device" }
             .take(80)
+
+    private companion object {
+        const val UPDATE_CHECK_GAP_MS = 12L * 60 * 60 * 1000
+    }
 }

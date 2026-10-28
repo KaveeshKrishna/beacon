@@ -112,6 +112,15 @@ class AppPreferences(context: Context) {
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
 
+    var lastUpdateCheckAt: Long
+        get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
+        set(value) = prefs.edit { putLong(KEY_LAST_UPDATE_CHECK, value) }
+
+    /** A version the owner chose to skip; manual checks still show it. */
+    var ignoredUpdateVersion: String
+        get() = prefs.getString(KEY_IGNORED_UPDATE, null).orEmpty()
+        set(value) = prefs.edit { putString(KEY_IGNORED_UPDATE, value.take(32)) }
+
     var lastHeartbeatAt: Long
         get() = prefs.getLong(KEY_LAST_HEARTBEAT, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_HEARTBEAT, value) }
@@ -201,6 +210,8 @@ class AppPreferences(context: Context) {
         const val KEY_SYNC_INTERVAL = "sync_interval_minutes"
         const val KEY_SCHEDULED_INTERVAL = "scheduled_interval_minutes"
         const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
+        const val KEY_LAST_UPDATE_CHECK = "last_update_check"
+        const val KEY_IGNORED_UPDATE = "ignored_update_version"
         const val KEY_LAST_SYNC = "last_sync_at"
         const val KEY_LAST_HEARTBEAT = "last_heartbeat_at"
         const val KEY_LAST_SMS = "last_sms_at"

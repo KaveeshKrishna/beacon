@@ -124,6 +124,19 @@ The app does **not** request `SCHEDULE_EXACT_ALARM`, wake locks held indefinitel
 
 `BootReceiver` listens for `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, re-schedules periodic work, and restarts lost mode if it was active. The app does not start before the user unlocks the device for the first time after a reboot, because credential-encrypted storage is unavailable.
 
+### In-app updates
+
+The app asks its paired server for `/api/app/update` at most once every 12 hours, and whenever the owner taps **Check for updates**. The server advertises the latest build from `BEACON_ANDROID_UPDATE_MANIFEST_URL` (a GitHub `releases/latest` response) or from the explicit `BEACON_ANDROID_VERSION`, `BEACON_ANDROID_APK_URL`, and `BEACON_ANDROID_APK_SHA256` variables.
+
+A downloaded APK is accepted only when:
+
+- the URL uses HTTPS (redirects are followed only to other HTTPS URLs),
+- the file's SHA-256 matches the advertised checksum,
+- the package name and version name match,
+- the signing certificate matches the installed app's certificate.
+
+Android then shows its own install confirmation. A sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. The build that first contains this feature (0.1.2) must be installed manually; later builds update in place.
+
 ### Location quality
 
 The sampler prefers a recent last-known fix that meets the accuracy target, then requests a fresh fix with a timeout (15 seconds low-power, 28 seconds high-accuracy). It keeps the best available result rather than failing when GPS is unavailable. Mock locations are reported as `isMocked`; the server records the flag but cannot prove a fix is genuine.
@@ -224,6 +237,7 @@ Residual risk is documented in [THREAT_MODEL.md](THREAT_MODEL.md). A rooted devi
 | `CAMERA` | Requested photo | Photo requests cannot be fulfilled |
 | `VIBRATE`, `WAKE_LOCK` | Alarm and reliable work | Reduced alarm effect |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Prompt only; user decides | OEM battery savers may delay work |
+| `REQUEST_INSTALL_PACKAGES` | Open the system installer for a verified update | Updates must be downloaded and installed manually |
 
 The app explains each permission in context. It never requests a permission in the background or enables a capability silently.
 
@@ -257,11 +271,13 @@ State flows from `AppContainer` into `BeaconViewModel`; there is no second sourc
 
 ```bash
 cd android
+./gradlew :app:testDebugUnitTest
 ./gradlew :app:assembleDebug
 ./gradlew :app:assembleRelease
+./gradlew :app:lintRelease
 ```
 
-There are no Android unit or instrumentation tests in `v0.1.0`; this is a known gap tracked in [ROADMAP.md](ROADMAP.md). Verification is currently a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
+Unit tests cover version comparison for the in-app updater; there is no instrumentation suite yet. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
 
 ```bash
 adb shell am start -n dev.beacon.app.debug/dev.beacon.app.MainActivity
@@ -283,6 +299,9 @@ The app writes almost nothing to logcat by design. Use the in-app status line, t
 | No tracking with the screen off | Background location denied or OEM battery saver | Grant "Allow all the time"; exempt from battery optimization |
 | Photo request does nothing | Notifications denied or request expired | Check notification settings; request a new photo |
 | "This device is no longer authorised" | Device revoked or unpaired | Remove the old device and pair again |
+| Check for updates says the server does not publish updates | `BEACON_ANDROID_*` variables are missing | Set the update variables and redeploy |
+| Install opens system settings | "Allow installing unknown apps" is off | Allow it for Beacon, return, tap Install again |
+| Update download fails its integrity check | Release asset and `.sha256` do not match, or the server is stale | Re-upload both release assets; wait for the manifest cache |
 | Queue keeps growing | Server unreachable or certificate invalid | Check the server URL and device clock; verify HTTPS from the browser |
 
 For server-side diagnosis, see [OPERATIONS.md](OPERATIONS.md).

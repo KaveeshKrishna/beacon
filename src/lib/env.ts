@@ -82,6 +82,43 @@ const envSchema = z.object({
     .default("https://tiles.openfreemap.org/styles/dark"),
   NEXT_PUBLIC_APK_URL: z.string().optional().or(z.literal("")),
   NEXT_PUBLIC_GITHUB_URL: z.string().optional().or(z.literal("")),
+  /**
+   * Android self-update metadata, served to paired devices by
+   * /api/app/update.
+   *
+   * Either point BEACON_ANDROID_UPDATE_MANIFEST_URL at a GitHub
+   * "releases/latest" API response (the server extracts beacon.apk and
+   * beacon.apk.sha256), or set the three explicit values below. The URL is
+   * never embedded in the APK, so each self-hoster controls its own channel.
+   */
+  BEACON_ANDROID_UPDATE_MANIFEST_URL: z
+    .string()
+    .url()
+    .refine(
+      (value) => value.startsWith("https://"),
+      "BEACON_ANDROID_UPDATE_MANIFEST_URL must use https://",
+    )
+    .optional()
+    .or(z.literal("")),
+  BEACON_ANDROID_VERSION: z
+    .string()
+    .regex(/^\d+(\.\d+){1,3}$/, "BEACON_ANDROID_VERSION must look like 0.1.1")
+    .optional()
+    .or(z.literal("")),
+  BEACON_ANDROID_APK_URL: z
+    .string()
+    .url()
+    .refine(
+      (value) => value.startsWith("https://"),
+      "BEACON_ANDROID_APK_URL must use https://",
+    )
+    .optional()
+    .or(z.literal("")),
+  BEACON_ANDROID_APK_SHA256: z
+    .string()
+    .regex(/^[a-fA-F0-9]{64}$/, "BEACON_ANDROID_APK_SHA256 must be 64 hex characters")
+    .optional()
+    .or(z.literal("")),
   NEXT_PUBLIC_OPERATOR_NAME: z.string().default("Beacon Project"),
   NEXT_PUBLIC_CONTACT_EMAIL: z.string().default("security@example.com"),
 });

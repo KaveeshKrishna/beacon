@@ -22,6 +22,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 | Photos | User-mediated camera capture, JPEG validation, AES-256-GCM at rest, per-device cap and 30-day retention |
 | Geofences | Enter/exit evaluation on ingest, deduplicated events, in-app and email notifications |
 | Accounts | Argon2id passwords, opaque sessions, TOTP, email OTP, recovery codes, session management, audit log |
+| Updates | In-app download with SHA-256 and signing-certificate verification, then Android's one-tap installer |
 | Email | Relay-first / Resend-first / single-provider modes, retry and failover, per-user override, delivery log |
 | UI | Responsive dark/light dashboard, MapLibre + OpenFreeMap (no API key), Google Maps hand-off |
 | Ops | Health checks, retention cron, rate limits, audit trail, Vercel + Neon deployment |
@@ -95,6 +96,7 @@ The reference deployment is Vercel Hobby + Neon Free:
 3. Set `APP_URL` to the final HTTPS origin **before** the first production login.
 4. Run `npm run db:migrate` against the production database.
 5. Deploy. The included [`vercel.json`](vercel.json) registers one daily maintenance run.
+6. To enable in-app Android updates, set `BEACON_ANDROID_UPDATE_MANIFEST_URL` (or the explicit `BEACON_ANDROID_*` values) and redeploy. Sideloaded builds still show Android's one-tap install confirmation.
 
 Vercel Hobby allows only one cron run per day. Offline alerts therefore need an external scheduler hitting `/api/cron/maintenance` every 5–15 minutes with `Authorization: Bearer $CRON_SECRET`. Full instructions, including a free scheduler option, are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

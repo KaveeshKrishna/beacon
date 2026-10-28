@@ -19,6 +19,7 @@ These are not bugs and cannot be fixed by better code:
 | Airplane mode | No data. SMS fallback may still work if a cellular network is available and `SEND_SMS` is granted. |
 | Background camera / microphone | Blocked by Android. Photo capture requires a person to open the app and take the picture. |
 | Silent install of a system app | Not possible. Beacon is a normal user app. |
+| Silent self-update | Android shows its install confirmation for sideloaded APKs. Beacon verifies the checksum and signing key first, but cannot skip the prompt without Device Owner or Play. |
 | SIM removal lockout | Android gives apps no primitive to prevent SIM removal or lock the device because of it. Beacon reports the change; it cannot stop it. |
 | Remote wipe | Not implemented, and deliberately not claimed. Device admin in Beacon only grants `force-lock`. |
 | Surviving a determined thief | A thief can uninstall the app, disable location, revoke permissions, or keep the phone off. Encryption and device admin raise the cost; they do not guarantee recovery. |
@@ -119,7 +120,7 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - Android 8.0+ only. iOS and Windows clients do not exist yet.
 - The web dashboard is responsive and installable as a PWA, but it is not a substitute for the Android app: a browser cannot provide continuous background location.
 - The Android UI is English-only and has not had a formal accessibility audit.
-- There are no Android unit or instrumentation tests in the repository yet. CI builds the debug APK; it does not run on a device.
+- Android unit tests cover version comparison for the updater; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
 - The app has been exercised on an API 36 emulator. It has not been tested on a physical handset, across OEM skins, or through a full battery cycle.
 
 ---
