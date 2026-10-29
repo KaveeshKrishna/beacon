@@ -138,7 +138,7 @@ Someone uses Beacon to track another person without consent.
 | Photo URL guessing / IDOR | UUIDs plus an ownership join through `devices.userId`; cross-account requests return 404; `Cache-Control: private, no-store` |
 | Sensitive data in logs | Logger redacts common keys; tokens and coordinates are never logged by the Android client; email logs store recipient and error text only |
 | Browser caching of private pages | Authenticated routes are dynamic; sensitive API responses use `no-store`; `X-Robots-Tag` on photos |
-| Screenshots of the app | `FLAG_SECURE` on release builds (not debug) |
+| Screenshots of the app | `FLAG_SECURE` on release builds (not debug); screenshots are an explicit per-device opt-in |
 | Backup extraction | `allowBackup=false`, data extraction rules exclude app data, Keystore-encrypted token |
 
 ### Denial of service
@@ -174,7 +174,7 @@ These are known and accepted for `v0.1.0`:
 4. **Photos are decrypted in the server process.** The key is available to the running application; this is necessary to serve them.
 5. **IP addresses are keyed-hashed, not anonymous.** The HMAC key is `AUTH_SECRET`; without it, IPv4 space cannot be enumerated cheaply. If the secret leaks, it can. Rotate the secret to break correlation.
 6. **Email is not end-to-end encrypted.** Relay/Resend and the recipient provider can read verification and alert emails.
-7. **SIM removal cannot be prevented.** Beacon reports state and can alert; Android does not grant apps a lockout primitive.
+7. **SIM removal cannot be prevented.** Beacon reports state and can alert. With device admin enabled, the owner can opt into a screen lock after a READY→ABSENT transition, but a thief can avoid it by leaving the SIM in place; Android does not grant apps a lockout primitive.
 8. **Factory reset removes protection.** A reset device cannot be tracked by the installed app.
 9. **Free-tier cron is daily.** Without an external scheduler, offline alerts can be delayed by up to 24 hours.
 10. **No independent audit.** The code has unit tests and a documented review, but no third-party penetration test.

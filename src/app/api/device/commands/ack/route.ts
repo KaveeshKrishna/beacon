@@ -65,7 +65,10 @@ export async function POST(request: NextRequest) {
       throw new ApiError(404, "not_found", "Command not found or already closed.");
     }
 
-    return ok({ acknowledged: true, config: deviceRuntimeConfig(device) });
+    return ok({
+      acknowledged: true,
+      config: await deviceRuntimeConfig(device),
+    });
   } catch (error) {
     return errorResponse(error);
   }

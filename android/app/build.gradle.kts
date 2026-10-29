@@ -44,8 +44,8 @@ android {
         applicationId = "dev.beacon.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.1.3"
         resourceConfigurations += listOf("en")
         buildConfigField("String", "BEACON_BASE_URL", "\"$beaconBaseUrl\"")
     }

@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
 
     return ok({
       commands: pending,
-      config: deviceRuntimeConfig({
+      config: await deviceRuntimeConfig({
         ...device,
         simState: nextSimState ?? device.simState,
         batteryLevel: input.batteryLevel ?? device.batteryLevel,

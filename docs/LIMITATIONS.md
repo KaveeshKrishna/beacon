@@ -20,7 +20,7 @@ These are not bugs and cannot be fixed by better code:
 | Background camera / microphone | Blocked by Android. Photo capture requires a person to open the app and take the picture. |
 | Silent install of a system app | Not possible. Beacon is a normal user app. |
 | Silent self-update | Android shows its install confirmation for sideloaded APKs. Beacon verifies the checksum and signing key first, but cannot skip the prompt without Device Owner or Play. |
-| SIM removal lockout | Android gives apps no primitive to prevent SIM removal or lock the device because of it. Beacon reports the change; it cannot stop it. |
+| SIM removal lockout | Android gives apps no primitive to prevent SIM removal. Beacon reports the change and, when the owner opts in and device admin is active, locks the screen after a READY→ABSENT transition. It cannot stop the removal, erase the phone, or stop a thief who leaves the SIM in place. |
 | Remote wipe | Not implemented, and deliberately not claimed. Device admin in Beacon only grants `force-lock`. |
 | Surviving a determined thief | A thief can uninstall the app, disable location, revoke permissions, or keep the phone off. Encryption and device admin raise the cost; they do not guarantee recovery. |
 
@@ -76,7 +76,7 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - `Retry-After` from a provider is not honored; there is one fixed 300 ms retry per provider.
 - Offline alerts are evaluated by the maintenance route. On Vercel Hobby that is once a day unless an external scheduler calls it more often.
 - Alert state has cooldowns: offline 24 h, low battery 12 h, SIM change 6 h. A resolved-then-recurring condition may wait for the cooldown.
-- Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event.
+- Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event. The app's automatic interval adaptation uses the fence geometry returned with the last sync and the fix just taken, so a crossing is noticed at the next check-in rather than instantly.
 
 ---
 

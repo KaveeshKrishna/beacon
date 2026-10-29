@@ -2,6 +2,7 @@ package dev.beacon.app.network
 
 import android.net.Uri
 import dev.beacon.app.BuildConfig
+import dev.beacon.app.core.GeofenceInfo
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -171,6 +172,42 @@ class ApiClient {
         }
     }
 
+    suspend fun createGeofence(
+        serverUrl: String,
+        token: String,
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        radiusM: Int,
+    ): ApiResult<GeofenceInfo> = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("name", name)
+            put("centerLat", latitude)
+            put("centerLon", longitude)
+            put("radiusM", radiusM)
+            put("notifyOnEnter", true)
+            put("notifyOnExit", true)
+        }
+        when (val result = request("POST", serverUrl, "/api/device/geofences", token, body)) {
+            is RawResult.Failure -> result.toApiFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                data.getJSONObject("geofence").toGeofence()
+            }
+        }
+    }
+
+    suspend fun deleteGeofence(
+        serverUrl: String,
+        token: String,
+        geofenceId: String,
+    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        val path = "/api/device/geofences?id=${Uri.encode(geofenceId)}"
+        when (val result = request("DELETE", serverUrl, path, token, null)) {
+            is RawResult.Failure -> result.toApiFailure()
+            is RawResult.Success -> parse(result.body) { Unit }
+        }
+    }
+
     private fun request(
         method: String,
         serverUrl: String,
@@ -315,7 +352,39 @@ class ApiClient {
             lostMode = optBoolean("lostMode", false),
             offlineAlertMinutes = optInt("offlineAlertMinutes", 45).coerceIn(10, 10_080),
             fallbackSmsNumber = sms?.takeIf { it.matches(Regex("^\\+[1-9]\\d{6,14}$")) },
+            geofences = optJSONArray("geofences").toGeofences(),
         )
+    }
+
+    private fun JSONArray?.toGeofences(): List<GeofenceInfo> {
+        if (this == null) return emptyList()
+        val fences = mutableListOf<GeofenceInfo>()
+        for (index in 0 until minOf(length(), 20)) {
+            val item = optJSONObject(index) ?: continue
+            val fence = try {
+                item.toGeofence()
+            } catch (_: Exception) {
+                continue
+            }
+            fences += fence
+        }
+        return fences
+    }
+
+    private fun JSONObject.toGeofence(): GeofenceInfo {
+        val id = optString("id")
+        val name = optString("name").trim()
+        val lat = optDouble("centerLat", Double.NaN)
+        val lon = optDouble("centerLon", Double.NaN)
+        val radius = optInt("radiusM", 0)
+        if (id.isBlank() || name.isBlank() || !lat.isFinite() || !lon.isFinite()) {
+            throw JSONException("Invalid geofence")
+        }
+        if (lat !in -90.0..90.0 || lon !in -180.0..180.0) {
+            throw JSONException("Invalid geofence")
+        }
+        if (radius !in 50..50_000) throw JSONException("Invalid geofence")
+        return GeofenceInfo(id, name.take(60), lat, lon, radius)
     }
 
     private fun JSONArray?.toCommands(): List<DeviceCommand> {

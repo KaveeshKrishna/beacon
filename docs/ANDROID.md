@@ -120,6 +120,28 @@ Android 12+ restricts starting a foreground service from the background. If the 
 
 The app does **not** request `SCHEDULE_EXACT_ALARM`, wake locks held indefinitely, or a boot-time foreground service. Those choices trade a small amount of punctuality for store-policy and battery sanity.
 
+### Check-in interval and geofences
+
+The app offers Automatic, or a fixed interval of 1, 2, 5, 15, 30, or 60 minutes. Fixed intervals are always obeyed exactly; anything under 15 minutes runs through the foreground service, and the rest through WorkManager.
+
+Automatic follows the dashboard profile and, when the server has geofences for this device, adapts to the phone's last fix:
+
+| Profile | Inside a fence | Outside every fence |
+| --- | --- | --- |
+| `low` | 60 min | 30 min |
+| `balanced` | 60 min | 15 min |
+| `high` | 30 min | 15 min |
+
+Fences can be created from the dashboard or from the app itself: **Geofences → Add current place** takes a fresh high-accuracy fix, asks for a name and a 100 m–2 km radius, and creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry only decides the next check-in.
+
+Adaptation is evaluated when a check-in happens, using the fix that was just taken. A phone that leaves a fence is noticed at its next check-in, not at the moment it crosses the boundary. Instant exit detection would need Google Play services' `GeofencingClient` or an already-running foreground service, and Beacon deliberately avoids a Play services dependency.
+
+### SIM removal
+
+`SimStateReceiver` listens for `ACTION_SIM_STATE_CHANGED`. When a usable SIM transitions to absent it triggers an immediate sync attempt, so the last fix has the best chance of uploading over Wi-Fi, a hotspot, or an eSIM before the phone goes dark.
+
+**Lock on SIM removal** is opt-in and requires device admin. When enabled, the same transition calls `DevicePolicyManager.lockNow()`, putting the encrypted app data behind the owner's PIN. It cannot prevent the tray from being opened, erase the phone, or stop a thief who leaves the SIM in place and keeps the screen unlocked. Android has no API that lets a normal app prevent SIM removal.
+
 ### Boot and updates
 
 `BootReceiver` listens for `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, re-schedules periodic work, and restarts lost mode if it was active. The app does not start before the user unlocks the device for the first time after a reboot, because credential-encrypted storage is unavailable.
@@ -214,7 +236,9 @@ This is a best-effort breadcrumb, not a control channel. Beacon never sends comm
 - Queue rows encrypted individually with the same Keystore.
 - No token, coordinate, or command payload is logged.
 - `allowBackup=false`; data extraction rules exclude app data.
-- `FLAG_SECURE` on release builds prevents screenshots and screen recording of the app.
+- Geofence names and geometry are cached in app-private preferences so automatic scheduling works offline. They are not written to logs or exported.
+- `FLAG_SECURE` on release builds prevents screenshots and screen recording of the app (opt-out in Settings).
+- Lock on SIM removal is opt-in and uses device-admin `lockNow()` only after a READY→ABSENT transition. It is a deterrent, not a wipe, and a thief can bypass it by never removing the SIM.
 - Only the main activity (launcher and `beacon://` link) and the device-admin receiver are exported. The device-admin receiver requires `BIND_DEVICE_ADMIN`.
 - No dynamic code loading, no WebView, no third-party analytics or crash SDK.
 - Release builds are minified; mapping files are not published by default.
@@ -232,7 +256,6 @@ Residual risk is documented in [THREAT_MODEL.md](THREAT_MODEL.md). A rooted devi
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` | Lost-mode live tracking | Lost mode falls back to periodic work |
 | `POST_NOTIFICATIONS` | Command, alarm, and photo notices | Notices are invisible; FGS may not start |
 | `RECEIVE_BOOT_COMPLETED` | Re-schedule after reboot | Tracking resumes only after the app is opened |
-| `READ_PHONE_STATE` | SIM state changes | No SIM-change signal |
 | `SEND_SMS` | Optional SMS fallback | No SMS fallback |
 | `CAMERA` | Requested photo | Photo requests cannot be fulfilled |
 | `VIBRATE`, `WAKE_LOCK` | Alarm and reliable work | Reduced alarm effect |

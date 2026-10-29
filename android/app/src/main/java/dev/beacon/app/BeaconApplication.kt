@@ -46,6 +46,16 @@ class BeaconApplication : Application() {
         container = AppContainer(this)
         NotificationHelper.createChannels(this)
         val prefs = container.prefs
+        val simReady = try {
+            getSystemService(android.telephony.TelephonyManager::class.java)
+                ?.simState == android.telephony.TelephonyManager.SIM_STATE_READY
+        } catch (_: Exception) {
+            // Wi-Fi-only devices may not implement telephony at all.
+            false
+        }
+        if (simReady) {
+            prefs.simWasReady = true
+        }
         if (prefs.pairing() != null && !prefs.authRevoked) {
             TrackingScheduler.scheduleFromPreferences(this, prefs)
             if (prefs.lostMode) {
@@ -143,7 +153,11 @@ class AppContainer(context: Context) {
             lostMode = prefs.lostMode,
             trackingProfile = prefs.trackingProfile,
             syncIntervalMinutes = prefs.syncIntervalMinutes,
+            effectiveIntervalMinutes = prefs.effectiveIntervalMinutes(),
+            geofences = prefs.geofences,
+            insideGeofenceName = prefs.insideGeofenceName,
             allowScreenshots = prefs.allowScreenshots,
+            lockOnSimRemoval = prefs.lockOnSimRemoval,
             lastSyncAt = prefs.lastSyncAt,
             lastError = prefs.lastError,
             queuedCount = runCatching { queue.count() }.getOrDefault(0),

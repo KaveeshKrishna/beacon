@@ -101,6 +101,7 @@ Limits are fixed-window counters stored in Postgres, so they survive serverless 
 | Device heartbeat | 30 / min per device + IP |
 | Device command poll | 30 / min per device + IP |
 | Device command ack | 60 / min per device + IP |
+| Device geofence writes | 20 / min per device + IP |
 | Device photo upload | 6 / hour per device |
 | Device unpair | 5 / hour per device |
 | Dashboard command creation | 30 / min per user |
@@ -560,6 +561,15 @@ Response:
       "lostMode": false,
       "offlineAlertMinutes": 45,
       "fallbackSmsNumber": null,
+      "geofences": [
+        {
+          "id": "7c2a4e6f-1b3d-4a5c-8e9f-0a1b2c3d4e5f",
+          "name": "Home",
+          "centerLat": 51.5072,
+          "centerLon": -0.1276,
+          "radiusM": 250
+        }
+      ],
       "serverTime": "2026-10-23T14:10:00.000Z"
     }
   }
@@ -620,6 +630,29 @@ Acknowledges a command. Only `pending` and `delivered` commands can be closed.
 `status` is `completed`, `failed`, or `unsupported`. `result` is free-form JSON, truncated to `{ "truncated": true }` if its serialized form exceeds 4,000 characters. Unknown, already-closed, or other-device commands return `404 not_found`.
 
 Do not acknowledge `CAPTURE_PHOTO` as completed when the request is merely shown. The server completes it when the photo is uploaded. If the person dismisses the request, the app sends `unsupported`; if it expires locally, the app sends `failed`.
+
+### `GET|POST|DELETE /api/device/geofences`
+
+The paired app manages only the fences that belong to the device presenting the token. There is no device id parameter; the server derives it from the bearer token.
+
+`GET` returns `{ "geofences": [Geofence] }`. `POST` creates one:
+
+```json
+{
+  "name": "Home",
+  "centerLat": 51.5072,
+  "centerLon": -0.1276,
+  "radiusM": 250,
+  "notifyOnEnter": true,
+  "notifyOnExit": true
+}
+```
+
+`name` is 1–60 characters, coordinates are finite and in range, and `radiusM` is 50–50,000. A device can have at most 20 fences; the 21st returns `409 geofence_limit`. Creation returns `201` with `{ "geofence": Geofence }`.
+
+`DELETE` takes `?id=<uuid>` and returns `{ "deleted": true }`. A fence that belongs to another device returns `404 not_found`, not `403`, so ids cannot be probed. Both writes are rate-limited and audited with `via: "android"`.
+
+The runtime config includes the same geometry so the app can adapt its automatic check-in interval without another round trip.
 
 ### `POST /api/device/photos`
 

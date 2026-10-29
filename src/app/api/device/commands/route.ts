@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
     return ok({
       commands: pending,
-      config: deviceRuntimeConfig(device),
+      config: await deviceRuntimeConfig(device),
       serverTime: new Date().toISOString(),
     });
   } catch (error) {

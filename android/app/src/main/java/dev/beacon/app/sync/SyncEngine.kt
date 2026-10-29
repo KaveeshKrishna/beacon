@@ -150,7 +150,7 @@ class SyncEngine(
             }
         }
 
-        config?.let { applyConfig(it) }
+        config?.let { applyConfig(it, point) }
 
         var needsAnotherFlush = false
         commands
@@ -185,7 +185,7 @@ class SyncEngine(
                     prefs.lastSyncAt = System.currentTimeMillis()
                     prefs.lastError = null
                     sentSomething = true
-                    result.config?.let(::applyConfig)
+                    result.config?.let { applyConfig(it, point) }
                 }
                 is FlushResult.Failure -> {
                     if (result.revoked) {
@@ -250,24 +250,38 @@ class SyncEngine(
         }
     }
 
-    private fun applyConfig(config: DeviceConfig) {
+    private fun applyConfig(config: DeviceConfig, point: LocationPoint?) {
         prefs.offlineAlertMinutes = config.offlineAlertMinutes
         prefs.fallbackSmsNumber = config.fallbackSmsNumber
-        if (prefs.trackingProfile != config.trackingProfile) {
+
+        val intervalBefore = prefs.effectiveIntervalMinutes()
+        val profileChanged = prefs.trackingProfile != config.trackingProfile
+        if (profileChanged) {
             prefs.trackingProfile = config.trackingProfile
-            TrackingScheduler.scheduleFromPreferences(context, prefs)
         }
-        if (prefs.lostMode != config.lostMode) {
+
+        // Update lost mode before scheduling: leaving lost mode must restore
+        // periodic work, otherwise the phone would have no next check-in.
+        val lostModeChanged = prefs.lostMode != config.lostMode
+        if (lostModeChanged) {
             prefs.lostMode = config.lostMode
-            if (config.lostMode) {
-                try {
-                    TrackingService.start(context)
-                } catch (_: Exception) {
-                    // Periodic work still runs; the UI explains the limitation.
-                }
-            } else {
-                TrackingService.stop(context)
-            }
+        }
+
+        val fencesChanged = prefs.geofences != config.geofences
+        prefs.geofences = config.geofences
+        if (point != null) {
+            prefs.updateGeofenceState(point.latitude, point.longitude)
+        } else if (fencesChanged) {
+            // Without a fix the current fence is unknown. Treat the device as
+            // away from all fences so the next check-in is the attentive one.
+            prefs.clearGeofenceState()
+        }
+
+        if (intervalBefore != prefs.effectiveIntervalMinutes() ||
+            profileChanged ||
+            lostModeChanged
+        ) {
+            TrackingScheduler.scheduleFromPreferences(context, prefs)
         }
     }
 

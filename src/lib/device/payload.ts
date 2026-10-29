@@ -3,7 +3,7 @@ import "server-only";
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
-import { commands, type Device } from "@/db/schema";
+import { commands, geofences, type Device } from "@/db/schema";
 
 import { decryptSecret } from "@/lib/crypto";
 
@@ -57,7 +57,20 @@ export async function claimPendingCommands(
   }));
 }
 
-export function deviceRuntimeConfig(device: Device) {
+export type DeviceGeofenceConfig = {
+  id: string;
+  name: string;
+  centerLat: number;
+  centerLon: number;
+  radiusM: number;
+};
+
+/**
+ * Everything the tracking app needs to decide how often to check in. The
+ * geofence list is intentionally small (20 per device) and only contains
+ * geometry, so one request per sync is cheap.
+ */
+export async function deviceRuntimeConfig(device: Device) {
   let fallbackSmsNumber: string | null = null;
   if (device.fallbackSmsEnc) {
     try {
@@ -71,11 +84,24 @@ export function deviceRuntimeConfig(device: Device) {
     }
   }
 
+  const fenceRows = await db()
+    .select({
+      id: geofences.id,
+      name: geofences.name,
+      centerLat: geofences.centerLat,
+      centerLon: geofences.centerLon,
+      radiusM: geofences.radiusM,
+    })
+    .from(geofences)
+    .where(eq(geofences.deviceId, device.id))
+    .orderBy(asc(geofences.createdAt));
+
   return {
     trackingProfile: device.trackingProfile,
     lostMode: device.status === "lost",
     offlineAlertMinutes: device.config?.offlineAlertMinutes ?? 45,
     fallbackSmsNumber,
+    geofences: fenceRows satisfies DeviceGeofenceConfig[],
     serverTime: new Date().toISOString(),
   };
 }

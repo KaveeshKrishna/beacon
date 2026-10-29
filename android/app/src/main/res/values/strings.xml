@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Beacon</string>
     <string name="device_admin_label">Beacon device lock</string>
-    <string name="device_admin_description">Allows a signed-in Beacon account to lock this device when you explicitly send a lock command. Beacon cannot erase the device, reset the password or access your data through this permission.</string>
+    <string name="device_admin_description">Allows a signed-in Beacon account to lock this device when you explicitly send a lock command, and (if you turn it on) to lock the screen when the SIM card is removed. Beacon cannot erase the device, reset the password or access your data through this permission.</string>
 
     <string name="channel_tracking_name">Background location</string>
     <string name="channel_tracking_description">Shows when Beacon is keeping a live location session open.</string>

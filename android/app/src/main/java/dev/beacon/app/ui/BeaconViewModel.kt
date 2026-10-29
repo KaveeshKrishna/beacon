@@ -57,6 +57,17 @@ data class UpdateUiState(
     val error: String? = null,
 )
 
+data class GeofenceUiState(
+    val open: Boolean = false,
+    val locating: Boolean = false,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val accuracyM: Double? = null,
+    val creating: Boolean = false,
+    val deletingId: String? = null,
+    val error: String? = null,
+)
+
 class BeaconViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as BeaconApplication
     private val container = app.container
@@ -78,6 +89,9 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     private val checker = UpdateChecker(app)
     private val _update = MutableStateFlow(UpdateUiState())
     val update: StateFlow<UpdateUiState> = _update.asStateFlow()
+
+    private val _geofence = MutableStateFlow(GeofenceUiState())
+    val geofence: StateFlow<GeofenceUiState> = _geofence.asStateFlow()
 
     init {
         cleanupExpiredPhoto()
@@ -184,6 +198,140 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     fun setAllowScreenshots(enabled: Boolean) {
         container.prefs.allowScreenshots = enabled
         container.refresh()
+    }
+
+    fun setLockOnSimRemoval(enabled: Boolean) {
+        if (enabled && !dev.beacon.app.security.DeviceAdmin.isActive(app)) {
+            _feedback.value = Feedback(
+                "Enable device admin first, then turn on lock on SIM removal.",
+                true,
+            )
+            return
+        }
+        container.prefs.lockOnSimRemoval = enabled
+        container.refresh()
+        _feedback.value = Feedback(
+            if (enabled) {
+                "The screen will lock when the SIM is removed."
+            } else {
+                "Lock on SIM removal is off."
+            },
+            false,
+        )
+    }
+
+    fun openGeofenceDialog() {
+        if (_geofence.value.open || _geofence.value.locating) return
+        _geofence.value = GeofenceUiState(open = true, locating = true)
+        viewModelScope.launch {
+            val point = try {
+                container.sampler.collect(highAccuracy = true)
+            } catch (_: Exception) {
+                null
+            }
+            if (!_geofence.value.open) return@launch
+            _geofence.update {
+                it.copy(
+                    locating = false,
+                    latitude = point?.latitude,
+                    longitude = point?.longitude,
+                    accuracyM = point?.accuracyM,
+                    error = if (point == null) {
+                        "No location fix is available. Move somewhere with a clearer view of the sky and try again."
+                    } else {
+                        null
+                    },
+                )
+            }
+        }
+    }
+
+    fun closeGeofenceDialog() {
+        if (_geofence.value.creating) return
+        _geofence.value = GeofenceUiState()
+    }
+
+    fun createGeofence(nameInput: String, radiusM: Int) {
+        val draft = _geofence.value
+        val latitude = draft.latitude ?: return
+        val longitude = draft.longitude ?: return
+        if (!draft.open || draft.creating) return
+        val name = nameInput.trim()
+        if (name.isEmpty() || name.length > 60) {
+            _geofence.update {
+                it.copy(error = "Give the place a name of 1 to 60 characters.")
+            }
+            return
+        }
+        if (radiusM !in 50..50_000) {
+            _geofence.update { it.copy(error = "Choose a radius between 50 m and 50 km.") }
+            return
+        }
+        val pairing = container.prefs.pairing()
+        if (pairing == null) {
+            _geofence.update { it.copy(error = "Pair this device first.") }
+            return
+        }
+
+        _geofence.update { it.copy(creating = true, error = null) }
+        viewModelScope.launch {
+            when (
+                val result = container.api.createGeofence(
+                    serverUrl = pairing.serverUrl,
+                    token = pairing.token,
+                    name = name,
+                    latitude = latitude,
+                    longitude = longitude,
+                    radiusM = radiusM,
+                )
+            ) {
+                is ApiResult.Success -> {
+                    container.prefs.geofences = container.prefs.geofences + result.value
+                    container.prefs.updateGeofenceState(latitude, longitude)
+                    TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+                    TrackingScheduler.syncSoon(app)
+                    container.refresh()
+                    _geofence.value = GeofenceUiState()
+                    _feedback.value = Feedback("Geofence \"${result.value.name}\" created.", false)
+                }
+                is ApiResult.Failure -> {
+                    _geofence.update {
+                        it.copy(creating = false, error = result.message)
+                    }
+                }
+            }
+        }
+    }
+
+    fun deleteGeofence(id: String) {
+        if (_geofence.value.deletingId != null) return
+        val pairing = container.prefs.pairing() ?: return
+        _geofence.update { it.copy(deletingId = id) }
+        viewModelScope.launch {
+            when (
+                val result = container.api.deleteGeofence(
+                    serverUrl = pairing.serverUrl,
+                    token = pairing.token,
+                    geofenceId = id,
+                )
+            ) {
+                is ApiResult.Success -> {
+                    container.prefs.geofences =
+                        container.prefs.geofences.filterNot { it.id == id }
+                    TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+                    TrackingScheduler.syncSoon(app)
+                    container.refresh()
+                    _geofence.update { it.copy(deletingId = null) }
+                    _feedback.value = Feedback("Geofence removed.", false)
+                }
+                is ApiResult.Failure -> {
+                    _geofence.update {
+                        it.copy(deletingId = null, error = result.message)
+                    }
+                    _feedback.value = Feedback(result.message, true)
+                }
+            }
+        }
     }
 
     private fun autoCheckForUpdates() {

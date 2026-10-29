@@ -12,6 +12,54 @@ Nothing yet. Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
+## 0.1.3 — 2026-10-29
+
+### Added
+
+- Geofences can be created for the current location and deleted from the Android app. The device token is scoped to one device, and the server caps a device at 20 fences.
+- Automatic check-in adapts to the cached fence geometry: `low` 60/30, `balanced` 60/15, `high` 30/15 minutes inside/outside a fence. Fixed intervals are obeyed exactly.
+- Opt-in **Lock on SIM removal** using device admin. A READY→ABSENT transition calls `lockNow()`; it is a deterrent, not a remote wipe.
+
+### Changed
+
+- Runtime device configuration now includes fence geometry so the app can schedule without another request.
+
+### Fixed
+
+- Leaving lost mode now restores periodic work instead of leaving the phone with no scheduled check-in.
+- SIM-state reads no longer crash on devices that lack telephony support.
+
+### Security
+
+- Removed the unused `READ_PHONE_STATE` permission. Android exposes SIM state to the manifest receiver without it.
+- Fence names and geometry stay in app-private storage with backups disabled.
+
+---
+
+## 0.1.2 — 2026-10-28
+
+### Added
+
+- In-app Android updates: the paired server exposes `/api/app/update`, the app checks it every 12 hours and from Settings, and the APK is accepted only after an HTTPS download, SHA-256 match, package/version check, and signing-certificate match against the installed app.
+- Update card and one-tap system installer flow. Sideloaded builds still require Android's install confirmation.
+
+---
+
+## 0.1.1 — 2026-10-28
+
+### Added
+
+- User-selectable check-in interval: Automatic or a fixed 1, 2, 5, 15, 30, or 60 minutes. Intervals under 15 minutes use a foreground service; the rest use WorkManager.
+- Opt-in screenshots while secure-by-default `FLAG_SECURE` remains on.
+- Immediate queue flush when connectivity returns or the SIM state changes.
+
+### Fixed
+
+- Protection card overlap on the Android home screen.
+- Dashboard map worker loading.
+
+---
+
 ## 0.1.0 — 2026-10-24
 
 The first self-hosted release: a complete web dashboard, device API, and native Android client. Source-complete and build-verified; not independently audited. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before production use.

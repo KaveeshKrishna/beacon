@@ -173,7 +173,7 @@ These are ideas, not commitments:
 
 - Remote wipe, password extraction, or device erase.
 - Covert audio, camera, screen capture, or keylogging.
-- SIM-removal lockout or a claim that it is possible.
+- Preventing SIM removal or claiming that an app can do so. Beacon's opt-in screen lock is a deterrent, not a lockout.
 - A hosted multi-tenant SaaS with a central control plane.
 - Payments, subscriptions, or advertising.
 - Bypassing Android permissions, Play Integrity, or OEM security.

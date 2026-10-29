@@ -1,5 +1,6 @@
 package dev.beacon.app.network
 
+import dev.beacon.app.core.GeofenceInfo
 import org.json.JSONObject
 
 data class PairResponse(
@@ -14,6 +15,7 @@ data class DeviceConfig(
     val lostMode: Boolean,
     val offlineAlertMinutes: Int,
     val fallbackSmsNumber: String?,
+    val geofences: List<GeofenceInfo>,
 )
 
 data class DeviceCommand(

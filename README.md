@@ -20,7 +20,9 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 | Offline | Encrypted SQLite queue (Android Keystore AES-GCM), ordered upload, duplicate-safe ingestion, last-known location preserved across outages |
 | Control | Locate now, ring, lock screen, lost mode, owner message, sync now, photo request |
 | Photos | User-mediated camera capture, JPEG validation, AES-256-GCM at rest, per-device cap and 30-day retention |
-| Geofences | Enter/exit evaluation on ingest, deduplicated events, in-app and email notifications |
+| Geofences | Server-side enter/exit evaluation on ingest, deduplicated events, in-app and email notifications, in-app creation at the current location |
+| Check-in | Automatic adapts inside/outside fences; fixed 1–60 minute intervals; foreground service under 15 minutes |
+| SIM resilience | Immediate check-in on SIM-state change; opt-in screen lock on SIM removal |
 | Accounts | Argon2id passwords, opaque sessions, TOTP, email OTP, recovery codes, session management, audit log |
 | Updates | In-app download with SHA-256 and signing-certificate verification, then Android's one-tap installer |
 | Email | Relay-first / Resend-first / single-provider modes, retry and failover, per-user override, delivery log |

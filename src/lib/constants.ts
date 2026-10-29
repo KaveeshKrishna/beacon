@@ -73,6 +73,7 @@ export const RATE_LIMITS = {
   pairingAttemptIp: { limit: 30, windowSec: 15 * 60 },
   deviceIngest: { limit: 120, windowSec: 60 },
   deviceHeartbeat: { limit: 30, windowSec: 60 },
+  deviceGeofence: { limit: 20, windowSec: 60 },
   commandCreate: { limit: 30, windowSec: 60 },
   testEmail: { limit: 5, windowSec: 60 * 60 },
   changePassword: { limit: 5, windowSec: 15 * 60 },

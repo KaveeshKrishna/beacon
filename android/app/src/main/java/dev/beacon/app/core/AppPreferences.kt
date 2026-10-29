@@ -84,11 +84,99 @@ class AppPreferences(context: Context) {
     fun effectiveIntervalMinutes(): Int {
         val chosen = syncIntervalMinutes
         if (chosen > 0) return chosen
-        return when (trackingProfile) {
+        val base = when (trackingProfile) {
             "low" -> 60
             "high" -> 15
             else -> 30
         }
+        if (geofences.isEmpty()) return base
+
+        // Inside a place the owner trusts, check in less often. Away from all
+        // of them, check in more often. This only applies to Automatic; a
+        // fixed interval is always obeyed exactly.
+        val inside = insideGeofenceId?.let { id ->
+            geofences.any { it.id == id }
+        } == true
+        return if (inside) {
+            when (trackingProfile) {
+                "low" -> 60
+                "high" -> 30
+                else -> 60
+            }
+        } else {
+            when (trackingProfile) {
+                "low" -> 30
+                "high" -> 15
+                else -> 15
+            }
+        }
+    }
+
+    /**
+     * Geometry of the fences known to this device, cached so the scheduler can
+     * work offline. Authoritative copies live on the server.
+     */
+    var geofences: List<GeofenceInfo>
+        get() {
+            val raw = prefs.getString(KEY_GEOFENCES, null) ?: return emptyList()
+            return try {
+                val array = org.json.JSONArray(raw)
+                buildList {
+                    for (index in 0 until array.length()) {
+                        val item = array.optJSONObject(index) ?: continue
+                        val id = item.optString("id")
+                        val name = item.optString("name")
+                        val lat = item.optDouble("lat", Double.NaN)
+                        val lon = item.optDouble("lon", Double.NaN)
+                        val radius = item.optInt("radius", 0)
+                        if (id.isBlank() || name.isBlank()) continue
+                        if (!lat.isFinite() || !lon.isFinite()) continue
+                        if (radius !in 50..50_000) continue
+                        add(GeofenceInfo(id, name.take(60), lat, lon, radius))
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+        set(value) {
+            val array = org.json.JSONArray()
+            value.take(20).forEach { fence ->
+                array.put(
+                    org.json.JSONObject()
+                        .put("id", fence.id)
+                        .put("name", fence.name.take(60))
+                        .put("lat", fence.centerLat)
+                        .put("lon", fence.centerLon)
+                        .put("radius", fence.radiusM.coerceIn(50, 50_000)),
+                )
+            }
+            prefs.edit { putString(KEY_GEOFENCES, array.toString()) }
+            if (insideGeofenceId != null && value.none { it.id == insideGeofenceId }) {
+                insideGeofenceId = null
+            }
+        }
+
+    var insideGeofenceId: String?
+        get() = prefs.getString(KEY_INSIDE_FENCE, null)
+        private set(value) = prefs.edit {
+            if (value == null) remove(KEY_INSIDE_FENCE) else putString(KEY_INSIDE_FENCE, value)
+        }
+
+    val insideGeofenceName: String?
+        get() = insideGeofenceId?.let { id ->
+            geofences.firstOrNull { it.id == id }?.name
+        }
+
+    /** Re-evaluates the cached fences against a fresh fix. */
+    fun updateGeofenceState(latitude: Double, longitude: Double) {
+        insideGeofenceId = GeofenceMath
+            .containing(geofences, latitude, longitude)
+            ?.id
+    }
+
+    fun clearGeofenceState() {
+        insideGeofenceId = null
     }
 
     /**
@@ -107,6 +195,20 @@ class AppPreferences(context: Context) {
     var allowScreenshots: Boolean
         get() = prefs.getBoolean(KEY_ALLOW_SCREENSHOTS, false)
         set(value) = prefs.edit { putBoolean(KEY_ALLOW_SCREENSHOTS, value) }
+
+    /**
+     * Opt-in countermeasure for a pulled SIM tray. Locking the screen keeps
+     * the encrypted app data behind the owner's PIN; it is not a remote wipe
+     * and it does not stop a determined thief.
+     */
+    var lockOnSimRemoval: Boolean
+        get() = prefs.getBoolean(KEY_LOCK_ON_SIM_REMOVAL, false)
+        set(value) = prefs.edit { putBoolean(KEY_LOCK_ON_SIM_REMOVAL, value) }
+
+    /** Whether a usable SIM has been observed, so a transition can be detected. */
+    var simWasReady: Boolean
+        get() = prefs.getBoolean(KEY_SIM_WAS_READY, false)
+        set(value) = prefs.edit { putBoolean(KEY_SIM_WAS_READY, value) }
 
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
@@ -210,6 +312,10 @@ class AppPreferences(context: Context) {
         const val KEY_SYNC_INTERVAL = "sync_interval_minutes"
         const val KEY_SCHEDULED_INTERVAL = "scheduled_interval_minutes"
         const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
+        const val KEY_LOCK_ON_SIM_REMOVAL = "lock_on_sim_removal"
+        const val KEY_SIM_WAS_READY = "sim_was_ready"
+        const val KEY_GEOFENCES = "geofences"
+        const val KEY_INSIDE_FENCE = "inside_geofence_id"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         const val KEY_IGNORED_UPDATE = "ignored_update_version"
         const val KEY_LAST_SYNC = "last_sync_at"

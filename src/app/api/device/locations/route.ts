@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
         duplicates: 0,
         skipped: input.points.length,
         commands: [],
-        config: deviceRuntimeConfig(device),
+        config: await deviceRuntimeConfig(device),
       });
     }
 
@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
       duplicates,
       skipped: input.points.length - valid.length,
       commands: pending,
-      config: deviceRuntimeConfig(device),
+      config: await deviceRuntimeConfig(device),
     });
   } catch (error) {
     return errorResponse(error);

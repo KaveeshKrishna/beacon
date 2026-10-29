@@ -73,7 +73,14 @@ object DeviceStatusReader {
 
     fun simState(context: Context): String? {
         val manager = context.getSystemService(TelephonyManager::class.java) ?: return null
-        return when (manager.simState) {
+        // Wi-Fi-only tablets can lack the telephony subscription feature, in
+        // which case getSimState() throws instead of returning UNKNOWN.
+        val state = try {
+            manager.simState
+        } catch (_: Exception) {
+            return null
+        }
+        return when (state) {
             TelephonyManager.SIM_STATE_READY -> "READY"
             TelephonyManager.SIM_STATE_ABSENT -> "ABSENT"
             TelephonyManager.SIM_STATE_PIN_REQUIRED -> "PIN_REQUIRED"
