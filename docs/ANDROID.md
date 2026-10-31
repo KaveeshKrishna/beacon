@@ -1,12 +1,12 @@
 # Android App
 
-The Android client is a native Kotlin app built with Jetpack Compose. It holds no account password: pairing exchanges a one-use code for a per-device bearer token, and every request is scoped to that device.
+The Android client is a native Kotlin app built with Jetpack Compose. It holds no account password: pairing exchanges a one-use code for a per-device bearer token, and every request is scoped to that device. An optional account link is approved in the browser and yields a separate, narrow mobile token for the Find My screen and Tier 1 MFA recovery.
 
 - **Package:** `dev.beacon.app` (debug: `dev.beacon.app.debug`)
 - **Minimum Android:** 8.0 (API 26)
 - **Target / compile SDK:** 36
 - **Stack:** Kotlin 2.2.21, AGP 8.13.2, Gradle 8.14.3, Compose BOM 2025.12.01, WorkManager 2.10.5
-- **Size:** the minified release APK is roughly 1.3 MB; the debug APK is roughly 19 MB
+- **Size:** the minified release APK is roughly 1.9 MB; the debug APK is roughly 19 MB
 
 ---
 
@@ -136,6 +136,34 @@ Fences can be created from the dashboard or from the app itself: **Geofences →
 
 Adaptation is evaluated when a check-in happens, using the fix that was just taken. A phone that leaves a fence is noticed at its next check-in, not at the moment it crosses the boundary. Instant exit detection would need Google Play services' `GeofencingClient` or an already-running foreground service, and Beacon deliberately avoids a Play services dependency.
 
+### Linked account, Find My, and recovery
+
+An optional account link lets one phone see the other devices on the same Beacon account and perform a Tier 1 recovery if the authenticator is lost. The link is separate from device pairing:
+
+- The device token keeps reporting this phone's location. It is never widened to account scope.
+- The account link adds a second, narrow mobile session with `devices:read account:recover`. It cannot issue commands or change settings.
+
+**Linking.** Tap **Account → Link this phone**. The app generates a PKCE verifier, its S256 challenge, and a random `state`, then opens the browser at `/app/link-device`. The owner signs in, checks the device name, and approves. The browser returns through `beacon://account-linked?code=...&state=...`. Before exchanging the code the app compares `state` in constant time; a callback with the wrong state is ignored, so a malicious app that guesses the custom scheme cannot attach its own code. The verifier never leaves the phone. The link code is single-use and expires after five minutes.
+
+**Linked phones.** The account screen lists every active device on the account with its presence, battery, and latest fix. Selecting another device shows:
+
+- straight-line distance and cardinal direction from this phone's current fix;
+- a compass dial that rotates with the phone when a rotation-vector sensor is available;
+- age, accuracy, provider, and mocked-location warnings;
+- buttons for **Direction** and **Maps** (a `geo:` handoff with an OpenStreetMap fallback).
+
+The bearing is calculated from true north and corrected with the local magnetic declination. Without a magnetometer the arrow still points to true north; the screen tells the owner to hold the top of the phone north. This is not a walking route, indoor direction, or a replacement for maps.
+
+**Recovery.** A linked phone becomes eligible to reset MFA after **seven continuous days** of linking. Recovery requires:
+
+1. A biometric prompt using `BIOMETRIC_STRONG` on the phone.
+2. The account password, verified again by the server.
+3. Typing `RESET` in the confirmation dialog.
+
+The server then removes the authenticator and recovery codes, requires a new factor enrollment on the next web sign-in, revokes every web session and every other linked phone, and emails the owner. The phone that performed the reset stays linked. This is **MFA reset only**: it does not change the password, and a brand-new link cannot use it. A phone that was linked for less than seven days shows the remaining days instead.
+
+Unlinking clears the local access and refresh tokens first, then makes a best-effort server logout with a fresh token. If the server is unreachable, the phone still forgets the link; the owner can revoke the stale row under **Settings → Security → Linked phones**.
+
 ### SIM removal
 
 `SimStateReceiver` listens for `ACTION_SIM_STATE_CHANGED`. When a usable SIM transitions to absent it triggers an immediate sync attempt, so the last fix has the best chance of uploading over Wi-Fi, a hotspot, or an eSIM before the phone goes dark.
@@ -157,7 +185,7 @@ A downloaded APK is accepted only when:
 - the package name and version name match,
 - the signing certificate matches the installed app's certificate.
 
-Android then shows its own install confirmation. A sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. The build that first contains this feature (0.1.2) must be installed manually; later builds update in place.
+Android then shows its own install confirmation. A sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. The build that first contains this feature (0.1.2) had to be installed manually; 0.1.3 and later update in place.
 
 ### Location quality
 
@@ -237,9 +265,11 @@ This is a best-effort breadcrumb, not a control channel. Beacon never sends comm
 - No token, coordinate, or command payload is logged.
 - `allowBackup=false`; data extraction rules exclude app data.
 - Geofence names and geometry are cached in app-private preferences so automatic scheduling works offline. They are not written to logs or exported.
+- Account links use a PKCE S256 exchange plus an app-side constant-time `state` check. The mobile access token lasts 15 minutes; the rotating refresh token lasts 30 days and is rejected if replayed.
+- Account recovery requires a link at least seven days old, `BIOMETRIC_STRONG`, and the account password. The server verifies the password and revokes all other sessions.
 - `FLAG_SECURE` on release builds prevents screenshots and screen recording of the app (opt-out in Settings).
 - Lock on SIM removal is opt-in and uses device-admin `lockNow()` only after a READY→ABSENT transition. It is a deterrent, not a wipe, and a thief can bypass it by never removing the SIM.
-- Only the main activity (launcher and `beacon://` link) and the device-admin receiver are exported. The device-admin receiver requires `BIND_DEVICE_ADMIN`.
+- Only the main activity (launcher and `beacon://` links) and the device-admin receiver are exported. The device-admin receiver requires `BIND_DEVICE_ADMIN`.
 - No dynamic code loading, no WebView, no third-party analytics or crash SDK.
 - Release builds are minified; mapping files are not published by default.
 
@@ -261,6 +291,7 @@ Residual risk is documented in [THREAT_MODEL.md](THREAT_MODEL.md). A rooted devi
 | `VIBRATE`, `WAKE_LOCK` | Alarm and reliable work | Reduced alarm effect |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Prompt only; user decides | OEM battery savers may delay work |
 | `REQUEST_INSTALL_PACKAGES` | Open the system installer for a verified update | Updates must be downloaded and installed manually |
+| `USE_BIOMETRIC` | Gate a Tier 1 MFA reset behind the device biometric | MFA reset is unavailable on this phone |
 
 The app explains each permission in context. It never requests a permission in the background or enables a capability silently.
 
@@ -271,7 +302,8 @@ The app explains each permission in context. It never requests a permission in t
 ```
 dev.beacon.app
 ├── BeaconApplication.kt      App container, startup, state snapshot
-├── MainActivity.kt           Deep links, permission flows, camera, FLAG_SECURE
+├── MainActivity.kt           Deep links, permission flows, camera, biometric prompt, FLAG_SECURE
+├── account/                  PKCE link, token rotation, recovery eligibility, logout
 ├── core/                     Preferences, Keystore crypto, UI state model
 ├── data/                     Location point, queue, device status readers
 ├── location/                 Sampler, WorkManager scheduler
@@ -300,7 +332,7 @@ cd android
 ./gradlew :app:lintRelease
 ```
 
-Unit tests cover version comparison for the in-app updater; there is no instrumentation suite yet. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
+Unit tests cover version comparison for the in-app updater, geofence distance/bearing math, and PKCE verification; there is no instrumentation suite yet. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
 
 ```bash
 adb shell am start -n dev.beacon.app.debug/dev.beacon.app.MainActivity
@@ -322,6 +354,11 @@ The app writes almost nothing to logcat by design. Use the in-app status line, t
 | No tracking with the screen off | Background location denied or OEM battery saver | Grant "Allow all the time"; exempt from battery optimization |
 | Photo request does nothing | Notifications denied or request expired | Check notification settings; request a new photo |
 | "This device is no longer authorised" | Device revoked or unpaired | Remove the old device and pair again |
+| Link approval returns to the app but nothing happens | The callback was opened by another app, or the link expired | Start the link again from the app; approval codes last five minutes |
+| "Recovery becomes available after this phone has been linked for 7 days" | The mobile link is newer than the trust period | Keep the phone linked; use recovery codes or email OTP instead |
+| "Two-factor authentication is not enabled" | The account has no TOTP or email OTP | Nothing to reset; enable MFA in the browser |
+| Linked phones list is empty | No other active devices, or the account link was revoked | Pair the other phone or link this one again |
+| Direction arrow does not move | No rotation-vector sensor, or the phone is flat and still | The arrow still points to true north; hold the top of the phone north |
 | Check for updates says the server does not publish updates | `BEACON_ANDROID_*` variables are missing | Set the update variables and redeploy |
 | Install opens system settings | "Allow installing unknown apps" is off | Allow it for Beacon, return, tap Install again |
 | Update download fails its integrity check | Release asset and `.sha256` do not match, or the server is stale | Re-upload both release assets; wait for the manifest cache |

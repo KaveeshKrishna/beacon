@@ -12,6 +12,41 @@ Nothing yet. Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
+## 0.1.4 — 2026-10-30
+
+### Added
+
+- **Linked phones and Find My.** A paired phone can be linked to its Beacon account through a browser approval page. The app lists every active device on the account with presence, battery, and latest fix, and shows distance plus a true-north compass arrow to another device. Maps hand-off uses `geo:` with an OpenStreetMap fallback.
+- **Tier 1 MFA recovery.** A linked phone can reset a lost authenticator after seven continuous days, a `BIOMETRIC_STRONG` prompt, and the account password. The reset removes TOTP, email OTP, and recovery codes, requires new enrollment on the next web sign-in, revokes every web session and every other linked phone, keeps the performing phone linked, and emails the owner.
+- **Mobile account API.** `POST /api/mobile/link/approve`, `POST /api/mobile/auth/exchange|refresh|logout`, `GET /api/mobile/devices`, `GET /api/mobile/devices/:id/location`, `GET|DELETE /api/mobile/sessions`, and `POST /api/mobile/recovery/mfa-reset`.
+- **Linked phones card in Security settings**, with per-link revocation and recovery eligibility.
+- **Forced MFA enrollment** at `/mfa/setup` after a reset, including a one-time recovery-code display.
+
+### Changed
+
+- Login redirects to `/mfa/setup` when the account has `mfaEnrollmentRequired`; only the enrollment routes accept that session until a new factor is enabled.
+- The mobile session is narrower than the device token: `devices:read account:recover`, no commands, no settings, no history, no photos.
+- The Android app now depends on `androidx.fragment` for biometric `FragmentActivity` support.
+
+### Security
+
+- Link codes are single-use, expire after five minutes, and are stored as HMACs. PKCE S256 keeps the verifier on the phone; the app compares the callback `state` in constant time before exchanging the code.
+- Access tokens last 15 minutes; refresh tokens last 30 days and rotate on every use. Replaying a rotated token revokes the session family. A failed refresh with 401 clears the local link; a network failure keeps it.
+- Re-linking a device revokes any previous mobile session for that device, so an orphaned token family cannot outlive the link the owner sees on the phone.
+- Link approval verifies that the device belongs to the signed-in user. A wrong `state` does not clear a legitimate pending link; only expiry or a server error does.
+- Recovery requires a link at least seven days old, verifies the password server-side, and revokes all web and other mobile sessions. It is not available from a pairing token and does not change the password.
+- Unlink clears local tokens before the best-effort server logout, so an unreachable server cannot leave a usable refresh token behind.
+- Schema adds `mobile_sessions`, `mobile_link_codes`, `users.mfa_enrollment_required`, and `users.mfa_reset_at` in migration `drizzle/0003_lethal_gravity.sql`.
+
+### Verification
+
+- `npm run typecheck`, `npm run lint`, `npm test` (7 files, 49 tests), and `npm run build` — pass.
+- `npm audit` — 0 vulnerabilities.
+- `./gradlew :app:testDebugUnitTest :app:lintRelease :app:assembleRelease -PbeaconBaseUrl=https://beacon.example.com` — pass; 15 Android unit tests.
+- Release APK: versionCode 5, versionName 0.1.4, signed with the existing Beacon key, and scanned for personal strings before publication.
+
+---
+
 ## 0.1.3 — 2026-10-29
 
 ### Added

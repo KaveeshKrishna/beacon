@@ -7,11 +7,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.beacon.app.BuildConfig
 import dev.beacon.app.BeaconApplication
+import dev.beacon.app.account.AccountRepository
+import dev.beacon.app.account.Pkce
 import dev.beacon.app.core.Pairing
+import dev.beacon.app.core.PendingAccountLink
 import dev.beacon.app.location.TrackingScheduler
 import dev.beacon.app.media.PhotoProcessor
 import dev.beacon.app.network.ApiClient
 import dev.beacon.app.network.ApiResult
+import dev.beacon.app.network.FailureKind
+import dev.beacon.app.network.LinkedDevice
 import dev.beacon.app.notifications.NotificationHelper
 import dev.beacon.app.sync.SyncEngine
 import dev.beacon.app.sync.SyncTrigger
@@ -19,7 +24,10 @@ import dev.beacon.app.update.InstallResult
 import dev.beacon.app.update.UpdateCheck
 import dev.beacon.app.update.UpdateChecker
 import dev.beacon.app.update.UpdateInfo
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +76,26 @@ data class GeofenceUiState(
     val error: String? = null,
 )
 
+data class AccountUiState(
+    val linked: Boolean = false,
+    val accountName: String = "",
+    val accountEmailMasked: String = "",
+    val linkedAt: Long = 0L,
+    val recoveryEligible: Boolean = false,
+    val recoveryDaysRemaining: Int = AccountRepository.RECOVERY_MIN_AGE_DAYS,
+    val loading: Boolean = false,
+    val devices: List<LinkedDevice> = emptyList(),
+    val currentDeviceId: String = "",
+    val originLatitude: Double? = null,
+    val originLongitude: Double? = null,
+    val originAccuracyM: Double? = null,
+    val directionDeviceId: String? = null,
+    val busy: String? = null,
+    val error: String? = null,
+    val recoveryError: String? = null,
+    val recoveryDone: String? = null,
+)
+
 class BeaconViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as BeaconApplication
     private val container = app.container
@@ -93,20 +121,33 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     private val _geofence = MutableStateFlow(GeofenceUiState())
     val geofence: StateFlow<GeofenceUiState> = _geofence.asStateFlow()
 
+    private val accountRepository = AccountRepository(container.api, container.prefs)
+    private val _account = MutableStateFlow(AccountUiState())
+    val account: StateFlow<AccountUiState> = _account.asStateFlow()
+
     init {
+        syncAccountState()
         cleanupExpiredPhoto()
         autoCheckForUpdates()
     }
 
     fun refresh() {
         container.refresh()
+        expirePendingLink()
+        syncAccountState()
         cleanupExpiredPhoto()
     }
 
     fun handleDeepLink(uri: Uri?) {
         if (uri == null) return
         if (!uri.scheme.equals("beacon", ignoreCase = true)) return
-        if (!uri.host.equals("pair", ignoreCase = true)) return
+        when (uri.host?.lowercase()) {
+            "pair" -> handlePairInvite(uri)
+            "account-linked" -> handleAccountLinkCallback(uri)
+        }
+    }
+
+    private fun handlePairInvite(uri: Uri) {
         val code = uri.getQueryParameter("code").orEmpty()
         val server = uri.getQueryParameter("server").orEmpty()
         _pairing.update {
@@ -116,6 +157,291 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                 inviteLoaded = code.isNotBlank(),
                 error = null,
             )
+        }
+    }
+
+    /**
+     * Build the browser URL for linking this phone. The PKCE verifier and the
+     * state value stay in Keystore-backed preferences; only the challenge and
+     * a public state nonce are placed in the URL.
+     */
+    fun beginAccountLink(): String? {
+        if (_account.value.busy != null) return null
+        val pairing = container.prefs.pairing()
+        if (pairing == null) {
+            _feedback.value = Feedback("Pair this device before linking it to an account.", true)
+            return null
+        }
+        val verifier = Pkce.verifier()
+        val state = Pkce.state()
+        container.prefs.pendingAccountLink = PendingAccountLink(
+            serverUrl = pairing.serverUrl,
+            verifier = verifier,
+            state = state,
+            deviceId = pairing.deviceId,
+            createdAt = System.currentTimeMillis(),
+        )
+        _account.update { it.copy(busy = "link", error = null) }
+        val base = pairing.serverUrl.trimEnd('/')
+        return "$base/app/link-device?device=${Uri.encode(pairing.deviceId)}" +
+            "&challenge=${Pkce.challenge(verifier)}&state=$state"
+    }
+
+    private fun handleAccountLinkCallback(uri: Uri) {
+        val pending = container.prefs.pendingAccountLink
+        if (pending == null) {
+            _account.update {
+                it.copy(busy = null, error = "This link response did not come from this phone.")
+            }
+            return
+        }
+        val code = uri.getQueryParameter("code").orEmpty()
+        val state = uri.getQueryParameter("state").orEmpty()
+        val fresh = System.currentTimeMillis() - pending.createdAt <=
+            AccountRepository.PENDING_LINK_MAX_AGE_MS
+
+        if (!fresh) {
+            container.prefs.pendingAccountLink = null
+            _account.update {
+                it.copy(
+                    busy = null,
+                    error = "That link response expired. Try linking again.",
+                )
+            }
+            return
+        }
+        if (!statesMatch(state, pending.state)) {
+            // A different app can send our custom scheme. A wrong state must
+            // not destroy a link the owner is still completing in the browser.
+            _account.update {
+                it.copy(error = "This link response did not come from this phone.")
+            }
+            return
+        }
+        if (code.isBlank() || code.length > 200) {
+            container.prefs.pendingAccountLink = null
+            _account.update {
+                it.copy(
+                    busy = null,
+                    error = "That link response was invalid. Try linking again.",
+                )
+            }
+            return
+        }
+
+        _account.update { it.copy(busy = "link", error = null) }
+        viewModelScope.launch {
+            when (
+                val result = accountRepository.exchange(
+                    serverUrl = pending.serverUrl,
+                    code = code,
+                    verifier = pending.verifier,
+                    state = pending.state,
+                )
+            ) {
+                is ApiResult.Success -> {
+                    syncAccountState()
+                    _account.update { it.copy(busy = null, error = null) }
+                    _feedback.value = Feedback(
+                        "This phone is linked to ${result.value.accountName.ifBlank { "your account" }}.",
+                        false,
+                    )
+                    loadLinkedDevices()
+                }
+                is ApiResult.Failure -> {
+                    container.prefs.pendingAccountLink = null
+                    _account.update { it.copy(busy = null, error = result.message) }
+                    _feedback.value = Feedback(result.message, true)
+                }
+            }
+        }
+    }
+
+    private fun statesMatch(first: String, second: String): Boolean {
+        if (first.isEmpty() || second.isEmpty()) return false
+        val left = first.toByteArray(Charsets.UTF_8)
+        val right = second.toByteArray(Charsets.UTF_8)
+        return left.size == right.size && MessageDigest.isEqual(left, right)
+    }
+
+    fun cancelAccountLink() {
+        if (_account.value.busy != "link") return
+        container.prefs.pendingAccountLink = null
+        _account.update { it.copy(busy = null) }
+    }
+
+    fun loadLinkedDevices() {
+        if (!_account.value.linked || _account.value.loading) return
+        _account.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            val access = accountRepository.ensureAccess()
+            if (access is ApiResult.Failure) {
+                handleAccountAccessFailure(access)
+                return@launch
+            }
+            val session = (access as ApiResult.Success).value
+            val (devicesResult, origin) = coroutineScope {
+                val devices = async {
+                    container.api.mobileDevices(session.serverUrl, session.accessToken)
+                }
+                val fix = async {
+                    try {
+                        container.sampler.collect(highAccuracy = true)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                devices.await() to fix.await()
+            }
+            when (devicesResult) {
+                is ApiResult.Failure -> {
+                    if (devicesResult.kind == FailureKind.UNAUTHORIZED) {
+                        container.prefs.mobileSession = null
+                        syncAccountState()
+                        _feedback.value = Feedback(
+                            "This linked session was revoked. Link this phone again.",
+                            true,
+                        )
+                    } else {
+                        _account.update {
+                            it.copy(loading = false, error = devicesResult.message)
+                        }
+                    }
+                }
+                is ApiResult.Success -> {
+                    _account.update {
+                        it.copy(
+                            loading = false,
+                            error = null,
+                            devices = devicesResult.value.devices,
+                            currentDeviceId = devicesResult.value.currentDeviceId
+                                .ifBlank { session.deviceId },
+                            originLatitude = origin?.latitude,
+                            originLongitude = origin?.longitude,
+                            originAccuracyM = origin?.accuracyM,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleAccountAccessFailure(failure: ApiResult.Failure) {
+        val cleared = accountRepository.current() == null
+        if (cleared) {
+            syncAccountState()
+        } else {
+            _account.update { it.copy(loading = false, error = failure.message) }
+        }
+        _feedback.value = Feedback(failure.message, true)
+    }
+
+    fun openDirection(deviceId: String) {
+        _account.update { it.copy(directionDeviceId = deviceId) }
+    }
+
+    fun closeDirection() {
+        _account.update { it.copy(directionDeviceId = null) }
+    }
+
+    fun unlinkPhone() {
+        if (_account.value.busy != null) return
+        _account.update { it.copy(busy = "unlink") }
+        viewModelScope.launch {
+            val result = accountRepository.logout()
+            syncAccountState()
+            _account.update { it.copy(busy = null, directionDeviceId = null) }
+            _feedback.value = when {
+                result is ApiResult.Success -> Feedback(
+                    "This phone was unlinked from the account.",
+                    false,
+                )
+                result is ApiResult.Failure && result.kind == FailureKind.NETWORK -> Feedback(
+                    "Unlinked on this phone, but the server could not be reached. Revoke this phone in Security settings so its token cannot be reused.",
+                    true,
+                )
+                else -> Feedback(
+                    "Unlinked on this phone. The server may still list it briefly; revoke it in Security settings.",
+                    true,
+                )
+            }
+        }
+    }
+
+    fun recoverMfa(password: String) {
+        if (password.isBlank()) {
+            _account.update { it.copy(recoveryError = "Enter your account password.") }
+            return
+        }
+        if (_account.value.busy != null) return
+        _account.update { it.copy(busy = "recovery", recoveryError = null) }
+        viewModelScope.launch {
+            val access = accountRepository.ensureAccess()
+            if (access is ApiResult.Failure) {
+                handleAccountAccessFailure(access)
+                _account.update {
+                    it.copy(busy = null, recoveryError = access.message)
+                }
+                return@launch
+            }
+            val session = (access as ApiResult.Success).value
+            when (
+                val result = container.api.mobileResetMfa(
+                    serverUrl = session.serverUrl,
+                    accessToken = session.accessToken,
+                    password = password,
+                )
+            ) {
+                is ApiResult.Success -> {
+                    syncAccountState()
+                    _account.update {
+                        it.copy(busy = null, recoveryError = null, recoveryDone = result.value)
+                    }
+                }
+                is ApiResult.Failure -> {
+                    _account.update {
+                        it.copy(busy = null, recoveryError = result.message)
+                    }
+                }
+            }
+        }
+    }
+
+    fun clearAccountError() {
+        _account.update { it.copy(error = null) }
+    }
+
+    fun dismissRecoveryResult() {
+        _account.update { it.copy(recoveryDone = null, recoveryError = null) }
+    }
+
+    private fun expirePendingLink() {
+        if (_account.value.busy != "link") return
+        val pending = container.prefs.pendingAccountLink
+        val expired = pending == null ||
+            System.currentTimeMillis() - pending.createdAt >
+            AccountRepository.PENDING_LINK_MAX_AGE_MS
+        if (expired) {
+            container.prefs.pendingAccountLink = null
+            _account.update { it.copy(busy = null) }
+        }
+    }
+
+    private fun syncAccountState() {
+        val session = accountRepository.current()
+        _account.update { current ->
+            if (session == null) {
+                AccountUiState()
+            } else {
+                current.copy(
+                    linked = true,
+                    accountName = session.accountName,
+                    accountEmailMasked = session.accountEmailMasked,
+                    linkedAt = session.linkedAt,
+                    recoveryEligible = accountRepository.recoveryEligible(session),
+                    recoveryDaysRemaining = accountRepository.recoveryDaysRemaining(session),
+                )
+            }
         }
     }
 

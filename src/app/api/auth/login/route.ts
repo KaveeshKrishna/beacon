@@ -107,6 +107,31 @@ export async function POST(request: NextRequest) {
 
     await registerLoginSuccess(user.id);
 
+    // A recovery reset deliberately removed every factor. Grant only enough
+    // session to enroll a new one; `isFullyAuthenticated` keeps this session
+    // out of the dashboard until that happens.
+    if (user.mfaEnrollmentRequired) {
+      await createSession(user.id, ctx, { mfaVerified: false });
+      await audit({
+        userId: user.id,
+        action: "auth.login.mfa_enrollment_required",
+        ipHash: ctx.ipHash,
+        userAgent: ctx.userAgent,
+      });
+      after(async () => {
+        try {
+          await sendNewLoginEmail(user, ctx.userAgent);
+        } catch (error) {
+          logger.error("auth", "New login email failed after MFA reset", error);
+        }
+      });
+      return ok({
+        mfaRequired: false,
+        mfaEnrollmentRequired: true,
+        redirect: "/mfa/setup",
+      });
+    }
+
     const methods: string[] = [];
     if (user.totpEnabledAt) methods.push("totp");
     if (user.emailMfaEnabled) methods.push("email");

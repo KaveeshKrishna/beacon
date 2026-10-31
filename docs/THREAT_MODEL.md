@@ -2,7 +2,7 @@
 
 This document describes what Beacon protects, who it protects against, and where the limits are. It is written for self-hosters and contributors, not as a marketing page. If a control is not implemented, it is listed under residual risk rather than implied.
 
-**Last reviewed:** October 2026, for `v0.1.0`.
+**Last reviewed:** October 2026, for `v0.1.4`.
 
 ---
 
@@ -13,6 +13,9 @@ This document describes what Beacon protects, who it protects against, and where
 | Account password | Critical | Argon2id hash in `users.password_hash`; plaintext only in transit and browser memory |
 | Web session | Critical | Opaque token in an HttpOnly cookie; HMAC in `sessions.token_hash` |
 | Device bearer token | Critical | Android Keystore–sealed preference; HMAC in `devices.token_hash` |
+| Mobile access/refresh token | Critical | Android Keystore–sealed preference; HMACs in `mobile_sessions`; access 15 min, refresh 30 days |
+| Mobile link code | High | Five-minute, single-use code; HMAC in `mobile_link_codes`; PKCE verifier never leaves the phone |
+| Device biometric | Critical | Android biometric hardware; never sent to the server |
 | TOTP secret / recovery codes | Critical | AES-GCM ciphertext / HMAC hashes; plaintext shown once |
 | Location history | High | `locations` rows; TLS to Neon; no field-level encryption |
 | Evidence photos | High | AES-GCM ciphertext in `device_photos.data_enc` |
@@ -74,27 +77,38 @@ Someone uses Beacon to track another person without consent.
 
 **Residual:** Beacon cannot verify consent. It is not a covert surveillance tool, and the project does not support using it as one. Hosters are responsible for applicable law.
 
+### G. Stolen linked phone or malicious callback app
+
+Has an unlocked phone with an approved account link, or registers a competing `beacon://` handler to intercept the link callback.
+
+**Mitigations:** The mobile token is narrow (`devices:read account:recover`), access lives 15 minutes, refresh rotates and revokes on replay, and the app compares the callback `state` before exchanging a code. PKCE keeps the verifier on the phone, so an intercepted code cannot be exchanged. MFA reset additionally requires `BIOMETRIC_STRONG`, the account password, a link at least seven days old, and explicit confirmation; it revokes every other session and emails the owner.
+
+**Residual:** An unlocked, already-linked phone with the password can reset MFA. A malicious app can still race the custom-scheme callback, but cannot complete the exchange without the verifier. Verified App Links are the documented upgrade path.
+
 ---
 
 ## 3. Trust boundaries
 
 ```
 [Browser] ──TLS──▶ [Next.js/Vercel] ──TLS──▶ [Neon Postgres]
-                          │
-                          ├──▶ [Relay / Resend]
+    │                     │
+    │ approval            ├──▶ [Relay / Resend]
+    └──── beacon:// ──────┤
                           ├──▶ [FCM] (server-side only; no client registration yet)
                           └──▶ [OpenFreeMap tiles] (browser only)
 
 [Android app] ──TLS──▶ [Next.js/Vercel]
        │
-       └──▶ [Android Keystore]  (hardware-backed on most devices)
+       ├──▶ [Android Keystore]  (hardware-backed on most devices)
+       └──▶ [Android biometric] (local gate for MFA reset)
 ```
 
 - The server trusts the database and its own environment.
 - The server does **not** trust client-supplied identity, timestamps, coordinates, or device models. It validates shape and ranges, binds tokens to a device row, and enforces per-user ownership joins.
-- The browser does not receive device tokens, password hashes, or TOTP secrets.
+- The browser does not receive device tokens, password hashes, TOTP secrets, or mobile refresh tokens. It only returns a short-lived, single-use link code through the custom scheme.
+- The phone's device token and mobile token are separate capabilities. A mobile token cannot issue commands; a device token cannot read sibling devices or reset MFA.
 - OpenFreeMap sees tile requests from the browser (IP, approximate area). It does not receive Beacon account data. A self-hoster can swap the style URL.
-- Relay/Resend receive recipient addresses and email bodies. FCM receives a device token and a command notification when a client has registered one; the v0.1.0 Android app does not.
+- Relay/Resend receive recipient addresses and email bodies. FCM receives a device token and a command notification when a client has registered one; the current Android app does not.
 
 ---
 
@@ -109,6 +123,10 @@ Someone uses Beacon to track another person without consent.
 | Forged pairing code | 8-character code with 10-minute TTL, HMAC storage, atomic single-use consumption, IP rate limit |
 | TOTP replay | Monotonic last-used step; a code cannot be used twice even within its window |
 | Email OTP brute force | Five attempts per code, 10-minute expiry, one active code per user, per-account/IP rate limits |
+| Stolen mobile access token | 15-minute TTL, HMAC-only storage, scoped to `devices:read account:recover`, revoked with its session |
+| Stolen mobile refresh token | Single-use rotation; replay of a rotated token revokes the session family; device/user validity rechecked on every refresh |
+| Forged or intercepted link callback | PKCE S256 verifier stays on the phone; app-side constant-time `state` comparison; code is single-use and expires in five minutes |
+| Linked phone used to reset MFA | Requires a link older than seven days, `BIOMETRIC_STRONG`, the account password, and `confirm: "RESET"`; rate-limited and audited |
 
 ### Tampering
 
@@ -140,6 +158,7 @@ Someone uses Beacon to track another person without consent.
 | Browser caching of private pages | Authenticated routes are dynamic; sensitive API responses use `no-store`; `X-Robots-Tag` on photos |
 | Screenshots of the app | `FLAG_SECURE` on release builds (not debug); screenshots are an explicit per-device opt-in |
 | Backup extraction | `allowBackup=false`, data extraction rules exclude app data, Keystore-encrypted token |
+| Linked phone sees sibling devices | The mobile token is read-only, returns only name/model/presence/battery and the latest fix, excludes history and photos, and can be revoked from **Settings → Security → Linked phones** |
 
 ### Denial of service
 
@@ -161,12 +180,16 @@ Someone uses Beacon to track another person without consent.
 | Revoked device keeps syncing | `authenticateDevice` filters `revokedAt IS NULL` and the owning user’s `deletedAt` |
 | Email verification bypass | Sensitive actions use `requireVerifiedApiUser` / `requireVerifiedUser`; unverified users are redirected |
 | MFA bypass via direct API | Every authenticated page and API guard requires that the session completed the account’s enabled factor; a pending-MFA cookie cannot access app routes |
+| Device token used on mobile APIs | Mobile routes require `bc_mob_` tokens and the `devices:read` / `account:recover` scope; device tokens are never accepted |
+| Mobile token used to command a device | Mobile routes expose only read-only device summaries/locations and the MFA reset; they do not import command or settings handlers |
+| MFA reset from a pairing token | Recovery uses a separate mobile session with `account:recover`, created only through browser approval; pairing codes cannot mint it |
+| Recovery abuse from a fresh link | The server rejects links younger than seven days with `recovery_not_ready` and limits attempts per session and account |
 
 ---
 
 ## 5. Residual risks
 
-These are known and accepted for `v0.1.0`:
+These are known and accepted for `v0.1.4`:
 
 1. **No certificate pinning.** Self-hosting and certificate rotation make pinning a poor default. A compromised system CA, or a rooted device with a modified trust store, can intercept traffic. User-installed CAs are not trusted.
 2. **No hardware-backed attestation.** The server cannot prove the app binary is unmodified. Rooted clients can forge locations.
@@ -181,6 +204,11 @@ These are known and accepted for `v0.1.0`:
 11. **Account lockout is a denial-of-service lever.** Ten failed passwords lock an account for 15 minutes. Per-IP limits raise the cost, but a distributed attacker who knows an address can still trigger it. The lockout is intentional protection against password guessing.
 12. **Device bearer tokens are long-lived credentials.** A rooted device can expose its Keystore-protected token while the app is running. Revoking the device from the dashboard ends access, but detection is the operator’s responsibility.
 13. **External providers are trusted.** Relay/Resend see email content, FCM sees push metadata, and a malicious `beacon://pair` link can prefill an attacker-controlled server. The pairing screen always shows the server URL and requires an explicit Pair action, but it cannot authenticate the QR source.
+14. **Custom-scheme callbacks can be raced.** Another app can register `beacon://account-linked` and receive a link code. PKCE and the app-side `state` check prevent it from exchanging the code, but the legitimate app may not receive the callback. Verified App Links are the upgrade path. A wrong `state` never clears a pending legitimate link; only expiry or a server error does.
+15. **MFA reset is not password recovery.** A linked phone can remove the second factor only after seven days, a biometric check, and the password. If the authenticator is lost before the trust period and recovery codes are gone, the account still needs email OTP or operator assistance. Password recovery remains the email-reset flow.
+16. **The biometric gate is enforced locally.** The server sees a valid mobile session and the password, not the biometric result. A compromised unlocked phone that already holds the password can reset MFA. The seven-day link age and session revocation limit the blast radius.
+17. **A linked phone can see sibling devices.** It receives the same latest-fix summary as the Find My screen, not history or photos. Anyone holding an unlocked linked phone can see where the other devices are; unlink it or revoke it in the browser.
+18. **Compass direction is approximate.** The arrow mixes two location fixes with a magnetometer heading. Metal, magnets, vehicle dashboards, and indoor spaces distort the compass; the distance is straight-line, not a route.
 
 ---
 
@@ -191,6 +219,9 @@ These are known and accepted for `v0.1.0`:
 - No personal domain, email, or operator identity is committed to this repository.
 - Data export returns account, devices, locations, geofences, commands, and audit metadata as JSON.
 - Account deletion cascades devices, locations, geofences, commands, photos, sessions, and tokens. Email delivery logs are retained without a user link (`user_id` set null) for abuse investigation, then deleted by the 90-day cron.
+- Linking a phone stores only the token HMAC, the PKCE challenge, the callback state, the device id, and the account id. The PKCE verifier and the tokens stay on the phone.
+- A linked phone sees only the current device list and latest fixes needed for Find My. It cannot read location history, photos, commands, or settings.
+- An MFA reset sends a security email naming the performing device and revokes every other session.
 - The Android app explains every permission before asking and never enables a permission silently.
 
 See the public [privacy page](../src/app/privacy/page.tsx) for the user-facing version.
@@ -212,6 +243,8 @@ Use this before exposing an instance to the public internet:
 - [ ] No `.env`, keystore, `local.properties`, or personal notes are tracked.
 - [ ] Release APK is signed with a key that is not in the repository.
 - [ ] `FLAG_SECURE` is active in the release build (it is disabled only in debug).
+- [ ] Linked-phone recovery has been tested with a link younger and older than seven days.
+- [ ] The owner knows that MFA reset requires the password and a biometric, and that it revokes all other sessions.
 - [ ] Rate limits have been exercised with a load test or manual burst.
 - [ ] Dependency alerts and CI are enabled.
 - [ ] Logs are checked for tokens, coordinates, and email bodies.

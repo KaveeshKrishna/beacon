@@ -2,6 +2,7 @@
 
 import {
   KeyRound,
+  Link2,
   Loader2,
   LockKeyhole,
   MailCheck,
@@ -41,6 +42,19 @@ type SessionRow = {
   lastSeenAt: string;
   expiresAt: string;
   mfaVerified: boolean;
+};
+
+type MobileSessionRow = {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  device: string;
+  userAgent: string;
+  createdAt: string;
+  lastUsedAt: string;
+  accessExpiresAt: string;
+  refreshExpiresAt: string;
+  recoveryEligible: boolean;
 };
 
 type DialogState =
@@ -126,6 +140,11 @@ export function SecuritySettings({
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
 
+  const [mobileSessions, setMobileSessions] = useState<MobileSessionRow[]>([]);
+  const [mobileLoading, setMobileLoading] = useState(true);
+  const [mobileError, setMobileError] = useState<string | null>(null);
+  const [revokingMobile, setRevokingMobile] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -138,6 +157,26 @@ export function SecuritySettings({
         if (!cancelled) setSessionsError(errorMessage(caught));
       } finally {
         if (!cancelled) setSessionsLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const data = await apiFetch<{ sessions: MobileSessionRow[] }>(
+          "/api/mobile/sessions",
+        );
+        if (!cancelled) setMobileSessions(data.sessions);
+      } catch (caught) {
+        if (!cancelled) setMobileError(errorMessage(caught));
+      } finally {
+        if (!cancelled) setMobileLoading(false);
       }
     }
     void load();
@@ -349,6 +388,33 @@ export function SecuritySettings({
       });
     } finally {
       setRevoking(null);
+    }
+  }
+
+  async function revokeLinkedPhone(id: string, deviceName: string) {
+    if (
+      !window.confirm(
+        `Revoke Beacon access for ${deviceName}? It will need to be linked again from the app.`,
+      )
+    ) {
+      return;
+    }
+    setRevokingMobile(id);
+    try {
+      await apiFetch<{ revoked: boolean }>(`/api/mobile/sessions/${id}`, {
+        method: "DELETE",
+        body: JSON.stringify({}),
+      });
+      setMobileSessions((rows) => rows.filter((row) => row.id !== id));
+      push({ title: "Linked phone revoked", tone: "success" });
+    } catch (caught) {
+      push({
+        title: "Could not revoke linked phone",
+        description: errorMessage(caught),
+        tone: "danger",
+      });
+    } finally {
+      setRevokingMobile(null);
     }
   }
 
@@ -596,6 +662,91 @@ export function SecuritySettings({
             ))}
           </ul>
         )}
+      </SettingsCard>
+
+      <SettingsCard
+        action={
+          <Badge tone="neutral">{mobileSessions.length} linked</Badge>
+        }
+        description="Phones approved from the Android app. A linked phone can see every device's latest location and, after seven days, reset a lost authenticator with your password and biometrics. It cannot send commands or change settings."
+        title="Linked phones"
+      >
+        {mobileError ? (
+          <div className="p-4">
+            <FormMessage>{mobileError}</FormMessage>
+          </div>
+        ) : mobileLoading ? (
+          <div className="flex items-center gap-2 px-4 py-6 text-[11px] text-muted sm:px-5">
+            <Loader2 className="size-3.5 animate-spin" /> Loading linked phones
+          </div>
+        ) : mobileSessions.length === 0 ? (
+          <div className="px-4 py-6 sm:px-5">
+            <p className="text-[11px] leading-5 text-muted">
+              No phones are linked. On Android, open Beacon and choose
+              &ldquo;Link this phone&rdquo; under Account to start.
+            </p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-line">
+            {mobileSessions.map((row) => (
+              <li
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-5"
+                key={row.id}
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface-2 text-muted">
+                    <Link2 className="size-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-[12px] font-medium">
+                        {row.deviceName}
+                      </p>
+                      {row.recoveryEligible ? (
+                        <Badge tone="positive">Recovery ready</Badge>
+                      ) : (
+                        <Badge tone="warning">Recovery pending</Badge>
+                      )}
+                    </div>
+                    <p className="mono mt-1 text-[9.5px] text-faint">
+                      {row.device || "Android app"} · linked{" "}
+                      {formatRelative(row.createdAt)} · last used{" "}
+                      {formatRelative(row.lastUsedAt)}
+                    </p>
+                    <p className="mt-0.5 text-[9.5px] text-faint">
+                      {row.recoveryEligible
+                        ? "Can reset two-factor after biometrics and your password."
+                        : "Recovery unlocks seven days after linking."}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  disabled={revokingMobile === row.id}
+                  icon={
+                    revokingMobile === row.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )
+                  }
+                  onClick={() => revokeLinkedPhone(row.id, row.deviceName)}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Revoke
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex items-start gap-2.5 border-t border-line bg-surface-2/40 px-4 py-3.5 sm:px-5">
+          <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-positive" />
+          <p className="text-[10.5px] leading-4 text-muted">
+            Linking never gives the phone your password or a browser session.
+            Revoking a phone invalidates its access and refresh tokens
+            immediately.
+          </p>
+        </div>
       </SettingsCard>
 
       <section className="rounded-[12px] border border-line bg-surface-2/50 px-4 py-3.5">

@@ -14,7 +14,7 @@ import {
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
 import { sendMfaEnabledEmail } from "@/lib/auth/emails";
-import { requireVerifiedApiUser } from "@/lib/auth/guards";
+import { requireVerifiedApiUserForEnrollment } from "@/lib/auth/guards";
 import { totpSecretContext } from "@/lib/auth/mfa";
 import { regenerateRecoveryCodes } from "@/lib/auth/recovery";
 import {
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     assertContentType(request);
     assertTrustedOrigin(request);
     const ctx = requestContext(request);
-    const session = await requireVerifiedApiUser();
+    const session = await requireVerifiedApiUserForEnrollment();
     const input = await parseJson(request, mfaCodeSchema);
 
     await enforceRateLimit({
@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
       .set({
         totpEnabledAt: new Date(),
         totpLastStep: result.step,
+        mfaEnrollmentRequired: false,
         updatedAt: new Date(),
       })
       .where(eq(users.id, session.user.id));

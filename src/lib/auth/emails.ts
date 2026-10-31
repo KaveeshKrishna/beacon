@@ -103,3 +103,26 @@ export async function sendMfaEnabledEmail(
     logger.error("auth-email", "MFA state notice failed", error);
   }
 }
+
+export async function sendMfaResetEmail(
+  user: Pick<User, "id" | "email" | "name" | "timezone" | "emailProviderPriority">,
+  deviceName: string,
+): Promise<void> {
+  try {
+    await sendTransactionalEmail({
+      to: user.email,
+      userId: user.id,
+      priority: user.emailProviderPriority,
+      payload: {
+        template: "mfa_reset",
+        data: {
+          name: user.name,
+          when: formatDateTime(new Date(), user.timezone),
+          device: deviceName.slice(0, 80) || "A linked phone",
+        },
+      },
+    });
+  } catch (error) {
+    logger.error("auth-email", "MFA reset notice failed", error);
+  }
+}

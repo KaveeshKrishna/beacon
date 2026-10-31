@@ -235,6 +235,47 @@ export const liveLocationsQuerySchema = z.object({
   since: z.string().datetime({ offset: true }).optional(),
 });
 
+const pkceChallenge = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/, "Invalid PKCE challenge.");
+
+const pkceVerifier = z
+  .string()
+  .regex(/^[A-Za-z0-9\-._~]{43,128}$/, "Invalid PKCE verifier.");
+
+const pkceState = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{16,128}$/, "Invalid link state.");
+
+export const mobileLinkApproveSchema = z.object({
+  deviceId: uuid,
+  challenge: pkceChallenge,
+  state: pkceState,
+});
+
+export const mobileExchangeSchema = z.object({
+  code: z.string().min(20).max(200),
+  verifier: pkceVerifier,
+  state: pkceState,
+});
+
+export const mobileRefreshSchema = z.object({
+  refreshToken: z.string().min(20).max(200),
+});
+
+export const mobileLogoutSchema = z.object({
+  refreshToken: z.string().min(20).max(200).optional(),
+});
+
+/**
+ * MFA reset is a recovery action, not a password reset. The explicit literal
+ * makes an accidental POST from a future client fail closed.
+ */
+export const mfaResetSchema = z.object({
+  password: z.string().min(1).max(256),
+  confirm: z.literal("RESET"),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type LocationPointInput = z.infer<typeof locationPointSchema>;

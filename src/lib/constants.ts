@@ -53,6 +53,13 @@ export const COMMAND_LABELS: Record<CommandType, string> = {
 export const COMMAND_TTL_MINUTES = 24 * 60;
 export const PAIRING_CODE_TTL_MINUTES = 10;
 export const PAIRING_CODE_LENGTH = 8;
+export const MOBILE_LINK_TTL_MINUTES = 5;
+export const MOBILE_ACCESS_TTL_MINUTES = 15;
+export const MOBILE_REFRESH_TTL_DAYS = 30;
+export const MOBILE_RECOVERY_MIN_SESSION_AGE_DAYS = 7;
+export const MOBILE_ACCESS_PREFIX = "bc_mob_";
+export const MOBILE_REFRESH_PREFIX = "bc_ref_";
+export const MOBILE_TOKEN_SCOPE = "devices:read account:recover";
 export const EMAIL_CODE_TTL_MINUTES = 10;
 export const EMAIL_VERIFY_TTL_HOURS = 24;
 export const PASSWORD_RESET_TTL_MINUTES = 60;
@@ -77,6 +84,12 @@ export const RATE_LIMITS = {
   commandCreate: { limit: 30, windowSec: 60 },
   testEmail: { limit: 5, windowSec: 60 * 60 },
   changePassword: { limit: 5, windowSec: 15 * 60 },
+  mobileLinkApprove: { limit: 10, windowSec: 60 * 60 },
+  mobileExchangeIp: { limit: 30, windowSec: 15 * 60 },
+  mobileRefreshIp: { limit: 60, windowSec: 15 * 60 },
+  mobileDeviceRead: { limit: 120, windowSec: 60 },
+  mobileRecoverySession: { limit: 3, windowSec: 60 * 60 },
+  mobileRecoveryUser: { limit: 5, windowSec: 24 * 60 * 60 },
 } as const;
 
 export const LOCATION_RANGE_HOURS = {

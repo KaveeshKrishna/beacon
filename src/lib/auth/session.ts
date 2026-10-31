@@ -34,6 +34,10 @@ export function mfaRequiredFor(user: SessionUser): boolean {
 }
 
 export function isFullyAuthenticated(session: AuthSession): boolean {
+  // A recovery reset leaves the account intentionally without a factor. The
+  // password session must not reach the dashboard until a new factor is
+  // enrolled, even though no second factor is technically configured yet.
+  if (session.user.mfaEnrollmentRequired) return false;
   return !mfaRequiredFor(session.user) || session.mfaVerified;
 }
 

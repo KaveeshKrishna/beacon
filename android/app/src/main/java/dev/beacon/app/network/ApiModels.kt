@@ -42,6 +42,52 @@ data class PhotoUploadResponse(
     val photoId: String,
 )
 
+data class MobileExchangeResponse(
+    val accessToken: String,
+    val refreshToken: String,
+    val accessExpiresAt: Long,
+    val refreshExpiresAt: Long,
+    val sessionCreatedAt: Long,
+    val accountName: String,
+    val accountEmailMasked: String,
+    val deviceId: String,
+    val deviceName: String,
+)
+
+data class MobileRefreshResponse(
+    val accessToken: String,
+    val refreshToken: String,
+    val accessExpiresAt: Long,
+    val refreshExpiresAt: Long,
+)
+
+data class LinkedDeviceLocation(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyM: Double,
+    val recordedAt: Long,
+    val provider: String,
+    val isMocked: Boolean,
+)
+
+data class LinkedDevice(
+    val id: String,
+    val name: String,
+    val model: String,
+    val status: String,
+    val presence: String,
+    val batteryLevel: Int?,
+    val isCharging: Boolean?,
+    val lastSeenAt: Long?,
+    val lastLocation: LinkedDeviceLocation?,
+)
+
+data class LinkedDeviceList(
+    val currentDeviceId: String,
+    val serverTime: Long,
+    val devices: List<LinkedDevice>,
+)
+
 sealed interface ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>
 

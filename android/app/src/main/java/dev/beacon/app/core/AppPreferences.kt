@@ -16,6 +16,28 @@ data class PendingPhoto(
     val expiresAt: Long,
 )
 
+data class MobileSession(
+    val serverUrl: String,
+    val accessToken: String,
+    val refreshToken: String,
+    val accessExpiresAt: Long,
+    val refreshExpiresAt: Long,
+    val sessionCreatedAt: Long,
+    val linkedAt: Long,
+    val accountName: String,
+    val accountEmailMasked: String,
+    val deviceId: String,
+    val deviceName: String,
+)
+
+data class PendingAccountLink(
+    val serverUrl: String,
+    val verifier: String,
+    val state: String,
+    val deviceId: String,
+    val createdAt: Long,
+)
+
 class AppPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("beacon.preferences", Context.MODE_PRIVATE)
 
@@ -43,6 +65,10 @@ class AppPreferences(context: Context) {
             putString(KEY_OWNER_NAME, pairing.ownerName)
             putBoolean(KEY_AUTH_REVOKED, false)
             putString(KEY_LAST_ERROR, null)
+            // A mobile session is issued for one account and server. A new
+            // pairing invalidates any old link even if the server is the same.
+            remove(KEY_MOBILE_SESSION)
+            remove(KEY_PENDING_ACCOUNT_LINK)
         }
     }
 
@@ -63,6 +89,121 @@ class AppPreferences(context: Context) {
     fun clearAuthRevoked() {
         prefs.edit { putBoolean(KEY_AUTH_REVOKED, false) }
     }
+
+    /**
+     * A narrow account session issued by the link flow. It is separate from the
+     * device bearer token and is bound to this one device, so it can read the
+     * account's device list but cannot change tracking settings or send
+     * commands. Both tokens are sealed together as one Keystore blob.
+     */
+    var mobileSession: MobileSession?
+        get() {
+            val sealed = prefs.getString(KEY_MOBILE_SESSION, null) ?: return null
+            val raw = KeystoreCrypto.decryptString(sealed) ?: return null
+            return try {
+                val json = org.json.JSONObject(raw)
+                val session = MobileSession(
+                    serverUrl = json.optString("server"),
+                    accessToken = json.optString("access"),
+                    refreshToken = json.optString("refresh"),
+                    accessExpiresAt = json.optLong("accessExpires", 0L),
+                    refreshExpiresAt = json.optLong("refreshExpires", 0L),
+                    sessionCreatedAt = json.optLong("created", 0L),
+                    linkedAt = json.optLong("linkedAt", 0L),
+                    accountName = json.optString("accountName").take(80),
+                    accountEmailMasked = json.optString("emailMasked").take(120),
+                    deviceId = json.optString("deviceId"),
+                    deviceName = json.optString("deviceName").take(80),
+                )
+                val valid = session.serverUrl.startsWith("https://") &&
+                    session.accessToken.startsWith("bc_mob_") &&
+                    session.accessToken.length <= 200 &&
+                    session.refreshToken.startsWith("bc_ref_") &&
+                    session.refreshToken.length <= 200 &&
+                    session.accessExpiresAt > 0 &&
+                    session.refreshExpiresAt > 0 &&
+                    session.sessionCreatedAt > 0 &&
+                    session.linkedAt > 0 &&
+                    session.deviceId.isNotBlank()
+                session.takeIf { valid }
+            } catch (_: Exception) {
+                null
+            }
+        }
+        set(value) {
+            prefs.edit {
+                if (value == null) {
+                    remove(KEY_MOBILE_SESSION)
+                } else {
+                    val json = org.json.JSONObject().apply {
+                        put("server", value.serverUrl)
+                        put("access", value.accessToken)
+                        put("refresh", value.refreshToken)
+                        put("accessExpires", value.accessExpiresAt)
+                        put("refreshExpires", value.refreshExpiresAt)
+                        put("created", value.sessionCreatedAt)
+                        put("linkedAt", value.linkedAt)
+                        put("accountName", value.accountName.take(80))
+                        put("emailMasked", value.accountEmailMasked.take(120))
+                        put("deviceId", value.deviceId)
+                        put("deviceName", value.deviceName.take(80))
+                    }
+                    putString(
+                        KEY_MOBILE_SESSION,
+                        KeystoreCrypto.encryptString(json.toString()),
+                    )
+                }
+            }
+        }
+
+    /**
+     * The PKCE verifier is a secret: it is generated before the browser opens
+     * and must never be placed in the link URL. Only its SHA-256 challenge goes
+     * to the server, so an app that steals the callback still cannot exchange
+     * the code.
+     */
+    var pendingAccountLink: PendingAccountLink?
+        get() {
+            val sealed = prefs.getString(KEY_PENDING_ACCOUNT_LINK, null) ?: return null
+            val raw = KeystoreCrypto.decryptString(sealed) ?: return null
+            return try {
+                val json = org.json.JSONObject(raw)
+                val pending = PendingAccountLink(
+                    serverUrl = json.optString("server"),
+                    verifier = json.optString("verifier"),
+                    state = json.optString("state"),
+                    deviceId = json.optString("deviceId"),
+                    createdAt = json.optLong("createdAt", 0L),
+                )
+                val valid = pending.serverUrl.startsWith("https://") &&
+                    pending.verifier.matches(Regex("^[A-Za-z0-9\\-._~]{43,128}$")) &&
+                    pending.state.matches(Regex("^[A-Za-z0-9_-]{16,128}$")) &&
+                    pending.deviceId.isNotBlank() &&
+                    pending.createdAt > 0
+                pending.takeIf { valid }
+            } catch (_: Exception) {
+                null
+            }
+        }
+        set(value) {
+            prefs.edit {
+                if (value == null) {
+                    remove(KEY_PENDING_ACCOUNT_LINK)
+                } else {
+                    val json = org.json.JSONObject().apply {
+                        put("server", value.serverUrl)
+                        put("verifier", value.verifier)
+                        put("state", value.state)
+                        put("deviceId", value.deviceId)
+                        put("createdAt", value.createdAt)
+                    }
+                    putString(
+                        KEY_PENDING_ACCOUNT_LINK,
+                        KeystoreCrypto.encryptString(json.toString()),
+                    )
+                }
+            }
+        }
 
     var lostMode: Boolean
         get() = prefs.getBoolean(KEY_LOST_MODE, false)
@@ -307,6 +448,8 @@ class AppPreferences(context: Context) {
         const val KEY_DEVICE_NAME = "device_name"
         const val KEY_OWNER_NAME = "owner_name"
         const val KEY_AUTH_REVOKED = "auth_revoked"
+        const val KEY_MOBILE_SESSION = "mobile_session_sealed"
+        const val KEY_PENDING_ACCOUNT_LINK = "pending_account_link_sealed"
         const val KEY_LOST_MODE = "lost_mode"
         const val KEY_TRACKING_PROFILE = "tracking_profile"
         const val KEY_SYNC_INTERVAL = "sync_interval_minutes"

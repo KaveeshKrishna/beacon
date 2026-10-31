@@ -12,7 +12,7 @@ import {
   ok,
 } from "@/lib/api";
 import { audit } from "@/lib/audit";
-import { requireVerifiedApiUser } from "@/lib/auth/guards";
+import { requireVerifiedApiUserForEnrollment } from "@/lib/auth/guards";
 import { createTotpSetup, totpSecretContext } from "@/lib/auth/mfa";
 import { encryptSecret } from "@/lib/crypto";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     assertContentType(request);
     assertTrustedOrigin(request);
     const ctx = requestContext(request);
-    const session = await requireVerifiedApiUser();
+    const session = await requireVerifiedApiUserForEnrollment();
 
     await enforceRateLimit({
       bucket: "mfa-setup",

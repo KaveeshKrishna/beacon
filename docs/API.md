@@ -4,8 +4,9 @@ Beacon exposes a small JSON API over HTTPS. The dashboard and the Android app us
 
 - **Dashboard routes** (`/api/auth/*`, `/api/devices/*`, `/api/settings/*`, `/api/account/*`) use the `HttpOnly` session cookie. State-changing requests must also send an `Origin` header matching `APP_URL` (or a permitted Vercel origin) and `Content-Type: application/json`.
 - **Device routes** (`/api/device/*`) use a per-device bearer token. They do not use cookies or Origin checks. The phone has no account password.
+- **Mobile account routes** (`/api/mobile/*`) use a narrow, short-lived mobile bearer token obtained after a PKCE approval in the browser. They can list the account's devices, read their latest locations, and perform a Tier 1 MFA reset. They cannot issue commands, change settings, or read history.
 
-There is no API version prefix in `v0.1.0`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
+There is no API version prefix in `v0.1.4`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
 
 ---
 
@@ -105,6 +106,12 @@ Limits are fixed-window counters stored in Postgres, so they survive serverless 
 | Device photo upload | 6 / hour per device |
 | Device unpair | 5 / hour per device |
 | Dashboard command creation | 30 / min per user |
+| Mobile link approval | 10 / hour per user |
+| Mobile token exchange | 30 / 15 min per IP |
+| Mobile token refresh | 60 / 15 min per IP |
+| Mobile device read | 120 / min per mobile session |
+| MFA reset by linked phone | 3 / hour per mobile session |
+| MFA reset by account | 5 / 24 h per user |
 | Password change | 5 / 15 min |
 | Test email | 5 / hour |
 
@@ -168,7 +175,7 @@ Returns active (non-revoked) devices for the signed-in user, newest activity fir
 }
 ```
 
-`presence` is derived from `lastSeenAt`: `online` within 15 minutes, `stale` within 24 hours, otherwise `offline`. `status` is `active` or `lost`; revoked devices are omitted.
+`presence` is derived from `lastSeenAt`: `online` within 10 minutes, `stale` within 24 hours, otherwise `offline`. `status` is `active` or `lost`; revoked devices are omitted.
 
 #### `POST /api/devices/pairing-code`
 
@@ -689,6 +696,244 @@ Revokes the calling device. Body: `{}` (JSON content type required). Returns `{ 
 
 ---
 
+## Mobile account API
+
+The mobile account API lets a paired phone see the other devices on the same account and, after a trust period, reset a lost authenticator. It is deliberately narrower than the dashboard API.
+
+A mobile token is **not** a device token and **not** a web session:
+
+- Scope is fixed at `devices:read account:recover`.
+- It can list device summaries and read the latest location of any device on the account.
+- It cannot create commands, change settings, read location history, view photos, manage geofences, or delete a device.
+- Access tokens last 15 minutes. Refresh tokens last 30 days and rotate on every use.
+- The phone seals both tokens with the Android Keystore; the server stores only HMACs.
+
+### Linking a phone
+
+Linking is a browser approval, not a password form inside the app. The app never sees the account password.
+
+1. The app generates a PKCE verifier and its S256 challenge, plus a random `state`, and opens:
+
+   ```text
+   <APP_URL>/app/link-device?device=<deviceId>&challenge=<S256>&state=<random>
+   ```
+
+2. The signed-in owner reviews the device name and presses **Approve**. The page validates that the device belongs to the signed-in account.
+3. `POST /api/mobile/link/approve` returns a custom-scheme callback:
+
+   ```json
+   {
+     "redirectUrl": "beacon://account-linked?code=...&state=...",
+     "expiresAt": "2026-10-23T14:15:00.000Z",
+     "deviceName": "Pixel 7"
+   }
+   ```
+
+4. The app verifies the returned `state`, keeps the verifier local, and exchanges the code.
+
+Link codes are random 256-bit values, single-use, and expire after five minutes. The database stores only an HMAC. A wrong verifier does not consume a legitimate code.
+
+#### `POST /api/mobile/link/approve`
+
+Requires a verified web session, a trusted `Origin`, and JSON. This route is called by the browser page, not by the phone.
+
+```json
+{
+  "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
+  "challenge": "43-character-base64url-SHA256",
+  "state": "16-128-character-random-string"
+}
+```
+
+A device that does not belong to the caller returns `404 not_found`. Approval is rate-limited to 10 per hour per user and audited.
+
+#### `POST /api/mobile/auth/exchange`
+
+Unauthenticated apart from the single-use code. Requires JSON.
+
+```json
+{
+  "code": "single-use-link-code",
+  "verifier": "43-128-character-PKCE-verifier",
+  "state": "the-same-state"
+}
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "accessToken": "bc_mob_...",
+    "refreshToken": "bc_ref_...",
+    "accessExpiresAt": "2026-10-23T14:25:00.000Z",
+    "refreshExpiresAt": "2026-11-22T14:10:00.000Z",
+    "sessionCreatedAt": "2026-10-23T14:10:00.000Z",
+    "scope": "devices:read account:recover",
+    "device": { "id": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01", "name": "Pixel 7" },
+    "account": { "name": "Alex", "emailMasked": "a***@example.com" }
+  }
+}
+```
+
+An invalid, expired, used, wrong-state, or wrong-verifier code returns `401 invalid_link`. The response never reveals which check failed. `sessionCreatedAt` is the start of the trust period used by recovery.
+
+### Refreshing and revoking
+
+#### `POST /api/mobile/auth/refresh`
+
+```json
+{ "refreshToken": "bc_ref_..." }
+```
+
+Returns a new access/refresh pair plus new expiry timestamps. Refresh tokens are single-use. Reusing a token that was already rotated, including losing a concurrent-refresh race, revokes the whole mobile session and returns `401 invalid_refresh`. A refresh fails if the device was revoked or the user was deleted.
+
+#### `POST /api/mobile/auth/logout`
+
+Optionally sends the current access token as `Authorization: Bearer bc_mob_...` and a body of `{ "refreshToken": "bc_ref_..." }`. Either credential can revoke the session. The response is uniform:
+
+```json
+{ "revoked": true }
+```
+
+A missing or already-revoked token also returns `200` with `revoked: false`, so the route cannot be used to test whether a token exists. The Android app clears its local tokens before the call, so losing the network cannot leave a usable refresh token on the phone.
+
+### Reading linked devices
+
+All routes below require:
+
+```http
+Authorization: Bearer bc_mob_<access-token>
+Accept: application/json
+```
+
+#### `GET /api/mobile/devices`
+
+Returns every active device on the account, newest activity first.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "currentDeviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
+    "serverTime": "2026-10-23T14:11:00.000Z",
+    "devices": [
+      {
+        "id": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
+        "name": "Pixel 7",
+        "model": "Pixel 7",
+        "status": "active",
+        "presence": "online",
+        "batteryLevel": 72,
+        "isCharging": false,
+        "lastSeenAt": "2026-10-23T14:10:30.000Z",
+        "lastLocation": {
+          "latitude": 51.5072,
+          "longitude": -0.1276,
+          "accuracyM": 12,
+          "recordedAt": "2026-10-23T14:10:20.000Z",
+          "provider": "gps",
+          "isMocked": false
+        }
+      }
+    ]
+  }
+}
+```
+
+`lastLocation` is `null` until the device has uploaded a fix. `presence` uses the same online/stale/offline thresholds as the dashboard. Revoked devices are omitted.
+
+#### `GET /api/mobile/devices/:id/location`
+
+Returns the latest fix for one device on the same account, or `location: null`.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "device": { "id": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01", "name": "Pixel 7" },
+    "serverTime": "2026-10-23T14:11:00.000Z",
+    "location": { "...": "LocationDto" }
+  }
+}
+```
+
+A device belonging to another account returns `404 not_found`, not `403`.
+
+### Managing linked phones from the web
+
+These routes require a fully authenticated web session and a trusted `Origin` for the delete.
+
+#### `GET /api/mobile/sessions`
+
+Lists active mobile links for the signed-in account:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "sessions": [
+      {
+        "id": "0f26e1c4-6aef-4d63-9d8f-3d2a1b7c4e10",
+        "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
+        "deviceName": "Pixel 7",
+        "device": "Android · Chrome",
+        "userAgent": "Beacon/0.1.4 (Android 16)",
+        "createdAt": "2026-10-16T09:00:00.000Z",
+        "lastUsedAt": "2026-10-23T14:10:00.000Z",
+        "accessExpiresAt": "2026-10-23T14:25:00.000Z",
+        "refreshExpiresAt": "2026-11-22T14:10:00.000Z",
+        "recoveryEligible": true
+      }
+    ]
+  }
+}
+```
+
+`recoveryEligible` is true once the link is at least seven days old.
+
+#### `DELETE /api/mobile/sessions/:id`
+
+Revokes one mobile link for the account. Returns `{ "revoked": true }`; a link belonging to another account returns `404 not_found`. Revocation is immediate for both the access and refresh token.
+
+### Tier 1 recovery: reset MFA from a linked phone
+
+#### `POST /api/mobile/recovery/mfa-reset`
+
+Requires a mobile access token with `account:recover`, a link at least seven days old, and JSON.
+
+```json
+{
+  "password": "the account password",
+  "confirm": "RESET"
+}
+```
+
+The server verifies the password against the account hash. The literal `confirm` value makes an accidental request from a future client fail closed.
+
+On success:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "mfaEnrollmentRequired": true,
+    "message": "Two-factor authentication was reset. Sign in on the web with your password to enroll a new authenticator."
+  }
+}
+```
+
+The reset:
+
+- removes the TOTP secret, email OTP setting, recovery codes, and pending MFA challenges;
+- sets `mfaEnrollmentRequired`, so the next web sign-in must enroll a new factor;
+- revokes every web session and every other mobile link;
+- keeps the performing phone linked, so it can still read device locations;
+- records an audit entry and emails the account owner.
+
+This is **MFA reset only**. It does not change the password, and it is not available from a device-pairing token. A wrong password returns `401 invalid_password`; a link younger than seven days returns `403 recovery_not_ready`; an account with no factor enabled returns `409 mfa_not_enabled`. The route is limited to three attempts per hour per link and five per day per account.
+
+---
+
 ## Operational endpoints
 
 ### `GET /api/health/live`
@@ -756,6 +1001,10 @@ Schedule it every 5–15 minutes with an external scheduler when using Vercel Ho
 | `weak_password` | 422 | Password policy failure |
 | `breached_password` | 422 | Password found in HIBP |
 | `invalid_password` | 400 | Current password was wrong |
+| `invalid_link` | 401 | Mobile link code invalid, expired, used, or failed PKCE/state |
+| `invalid_refresh` | 401 | Mobile refresh token invalid, expired, rotated, or replayed |
+| `recovery_not_ready` | 403 | Linked phone has not completed the seven-day trust period |
+| `mfa_not_enabled` | 409 | MFA reset requested on an account with no factor enabled |
 | `already_enabled` | 409 | TOTP already enabled |
 | `not_enabled` | 409 | TOTP not enabled |
 | `setup_required` | 400 | TOTP setup must start first |
@@ -832,4 +1081,5 @@ curl -sS https://beacon.example.com/api/device/commands/ack \
 - `CAPTURE_PHOTO` is intentionally human-in-the-loop. A server-side or app-side attempt to capture without a foreground user action is unsupported, not a bug.
 - `fallbackSmsNumber` is returned only to the authenticated device, decrypted from `devices.fallback_sms_enc`. It is never included in dashboard responses, which expose only `fallbackSmsConfigured`.
 - Location history is returned in ascending time order for map rendering; command history is newest first.
+- A mobile account token is read-only plus recovery. It cannot issue commands, change settings, or read history, even for its own device.
 - The Android client is the reference device implementation. A future iOS or Windows client can implement the same seven device endpoints without changes to the server contract.

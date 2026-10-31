@@ -117,6 +117,8 @@ fun BeaconApp(
     onTakePhoto: () -> Unit,
     onSyncIntervalChanged: (Int) -> Unit,
     onAllowScreenshotsChanged: (Boolean) -> Unit,
+    onRequestBiometric: (() -> Unit) -> Unit,
+    onOpenAccountLink: (String) -> Boolean,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pairingState by viewModel.pairing.collectAsStateWithLifecycle()
@@ -125,11 +127,20 @@ fun BeaconApp(
     val capture by viewModel.capture.collectAsStateWithLifecycle()
     val update by viewModel.update.collectAsStateWithLifecycle()
     val geofence by viewModel.geofence.collectAsStateWithLifecycle()
+    val account by viewModel.account.collectAsStateWithLifecycle()
 
     val systemDark = isSystemInDarkTheme()
     var ownerControls by rememberSaveable { mutableStateOf(false) }
+    var showAccount by rememberSaveable { mutableStateOf(false) }
     val lostOverlay = state.lostMode && !ownerControls && !state.authRevoked
     if (!state.lostMode && ownerControls) ownerControls = false
+
+    LaunchedEffect(account.linked) {
+        if (!account.linked) showAccount = false
+    }
+    LaunchedEffect(showAccount, account.linked) {
+        if (showAccount && account.linked) viewModel.loadLinkedDevices()
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(feedback?.id) {
@@ -174,6 +185,20 @@ fun BeaconApp(
                         onSilenceAlarm = viewModel::stopAlarm,
                         onDeviceStatus = { ownerControls = true },
                     )
+                } else if (showAccount && account.linked) {
+                    AccountScreen(
+                        account = account,
+                        onBack = { showAccount = false },
+                        onRefresh = viewModel::loadLinkedDevices,
+                        onRequestLocation = onRequestLocation,
+                        onSelectDirection = viewModel::openDirection,
+                        onCloseDirection = viewModel::closeDirection,
+                        onUnlink = viewModel::unlinkPhone,
+                        onRequestBiometric = onRequestBiometric,
+                        onRecover = viewModel::recoverMfa,
+                        onDismissRecovery = viewModel::dismissRecoveryResult,
+                        onDismissError = viewModel::clearAccountError,
+                    )
                 } else {
                     HomeScreen(
                         state = state,
@@ -181,6 +206,7 @@ fun BeaconApp(
                         busyAction = busyAction,
                         captureWorking = capture == CaptureState.Working,
                         lostControls = ownerControls,
+                        account = account,
                         onLocate = viewModel::locateNow,
                         onSync = viewModel::syncNow,
                         onRequestLocation = onRequestLocation,
@@ -195,6 +221,14 @@ fun BeaconApp(
                         onTakePhoto = onTakePhoto,
                         onSyncIntervalChanged = viewModel::setSyncInterval,
                         onAllowScreenshotsChanged = onAllowScreenshotsChanged,
+                        onLinkAccount = {
+                            val url = viewModel.beginAccountLink()
+                            if (url != null && !onOpenAccountLink(url)) {
+                                viewModel.cancelAccountLink()
+                            }
+                        },
+                        onCancelAccountLink = viewModel::cancelAccountLink,
+                        onOpenAccountScreen = { showAccount = true },
                         onLockOnSimRemovalChanged = { enabled ->
                             if (enabled && !state.deviceAdmin) {
                                 onRequestAdmin()
@@ -414,6 +448,7 @@ private fun HomeScreen(
     busyAction: String?,
     captureWorking: Boolean,
     lostControls: Boolean,
+    account: AccountUiState,
     onLocate: () -> Unit,
     onSync: () -> Unit,
     onRequestLocation: () -> Unit,
@@ -426,6 +461,9 @@ private fun HomeScreen(
     onOpenPrivacy: () -> Unit,
     onOpenSettings: () -> Unit,
     onTakePhoto: () -> Unit,
+    onLinkAccount: () -> Unit,
+    onCancelAccountLink: () -> Unit,
+    onOpenAccountScreen: () -> Unit,
     onSyncIntervalChanged: (Int) -> Unit,
     onAllowScreenshotsChanged: (Boolean) -> Unit,
     onLockOnSimRemovalChanged: (Boolean) -> Unit,
@@ -617,6 +655,16 @@ private fun HomeScreen(
                 }
             }
         }
+
+        Spacer(Modifier.height(24.dp))
+        SectionHeader("Account", if (account.linked) "Linked" else "Not linked")
+        Spacer(Modifier.height(9.dp))
+        AccountSection(
+            account = account,
+            onLink = onLinkAccount,
+            onCancelLink = onCancelAccountLink,
+            onOpenAccountScreen = onOpenAccountScreen,
+        )
 
         Spacer(Modifier.height(24.dp))
         SectionHeader("Protection", "${safeguardCount(state)}/${safeguardTotal(state)} on")

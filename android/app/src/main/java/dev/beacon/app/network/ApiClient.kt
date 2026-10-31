@@ -53,12 +53,145 @@ class ApiClient {
         }
     }
 
+    suspend fun mobileExchange(
+        serverUrl: String,
+        code: String,
+        verifier: String,
+        state: String,
+    ): ApiResult<MobileExchangeResponse> = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("code", code)
+            put("verifier", verifier)
+            put("state", state)
+        }
+        when (
+            val result = request("POST", serverUrl, "/api/mobile/auth/exchange", null, body)
+        ) {
+            is RawResult.Failure -> result.toMobileFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                MobileExchangeResponse(
+                    accessToken = data.requireMobileToken("accessToken", "bc_mob_"),
+                    refreshToken = data.requireMobileToken("refreshToken", "bc_ref_"),
+                    accessExpiresAt = data.requireMillis("accessExpiresAt"),
+                    refreshExpiresAt = data.requireMillis("refreshExpiresAt"),
+                    sessionCreatedAt = data.requireMillis("sessionCreatedAt"),
+                    accountName = data.optJSONObject("account")
+                        ?.optString("name").orEmpty().take(80),
+                    accountEmailMasked =
+                        data.optJSONObject("account")?.optString("emailMasked").orEmpty().take(120),
+                    deviceId = data.optJSONObject("device")?.optString("id").orEmpty(),
+                    deviceName = data.optJSONObject("device")?.optString("name").orEmpty().take(80),
+                )
+            }
+        }
+    }
+
+    suspend fun mobileRefresh(
+        serverUrl: String,
+        refreshToken: String,
+    ): ApiResult<MobileRefreshResponse> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("refreshToken", refreshToken)
+        when (
+            val result = request("POST", serverUrl, "/api/mobile/auth/refresh", null, body)
+        ) {
+            is RawResult.Failure -> result.toMobileFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                MobileRefreshResponse(
+                    accessToken = data.requireMobileToken("accessToken", "bc_mob_"),
+                    refreshToken = data.requireMobileToken("refreshToken", "bc_ref_"),
+                    accessExpiresAt = data.requireMillis("accessExpiresAt"),
+                    refreshExpiresAt = data.requireMillis("refreshExpiresAt"),
+                )
+            }
+        }
+    }
+
+    suspend fun mobileDevices(
+        serverUrl: String,
+        accessToken: String,
+    ): ApiResult<LinkedDeviceList> = withContext(Dispatchers.IO) {
+        when (
+            val result = request("GET", serverUrl, "/api/mobile/devices", accessToken, null)
+        ) {
+            is RawResult.Failure -> result.toMobileFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                val devices = mutableListOf<LinkedDevice>()
+                val array = data.optJSONArray("devices")
+                if (array != null) {
+                    for (index in 0 until minOf(array.length(), MAX_LINKED_DEVICES)) {
+                        val item = array.optJSONObject(index) ?: continue
+                        item.toLinkedDevice()?.let(devices::add)
+                    }
+                }
+                LinkedDeviceList(
+                    currentDeviceId = data.optString("currentDeviceId"),
+                    serverTime = parseMillis(data.optString("serverTime")),
+                    devices = devices,
+                )
+            }
+        }
+    }
+
+    suspend fun mobileLocation(
+        serverUrl: String,
+        accessToken: String,
+        deviceId: String,
+    ): ApiResult<LinkedDeviceLocation?> = withContext(Dispatchers.IO) {
+        val path = "/api/mobile/devices/${Uri.encode(deviceId)}/location"
+        when (val result = request("GET", serverUrl, path, accessToken, null)) {
+            is RawResult.Failure -> result.toMobileFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                data.optJSONObject("location")?.toLinkedLocation()
+            }
+        }
+    }
+
+    suspend fun mobileLogout(
+        serverUrl: String,
+        accessToken: String,
+        refreshToken: String,
+    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("refreshToken", refreshToken)
+        when (
+            val result = request("POST", serverUrl, "/api/mobile/auth/logout", accessToken, body)
+        ) {
+            is RawResult.Failure -> result.toMobileFailure()
+            is RawResult.Success -> parse(result.body) { Unit }
+        }
+    }
+
+    suspend fun mobileResetMfa(
+        serverUrl: String,
+        accessToken: String,
+        password: String,
+    ): ApiResult<String> = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("password", password)
+            put("confirm", "RESET")
+        }
+        when (
+            val result = request(
+                "POST",
+                serverUrl,
+                "/api/mobile/recovery/mfa-reset",
+                accessToken,
+                body,
+            )
+        ) {
+            is RawResult.Failure -> result.toMobileFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                data.optString("message").ifBlank {
+                    "Two-factor authentication was reset. Sign in on the web with your password to enroll a new authenticator."
+                }
+            }
+        }
+    }
+
     suspend fun sync(
         serverUrl: String,
         token: String,
         points: List<JSONObject>,
-    ): ApiResult<SyncResponse> = withContext(Dispatchers.IO) {
-        val array = JSONArray()
+    ): ApiResult<SyncResponse> = withContext(Dispatchers.IO) {        val array = JSONArray()
         points.forEach(array::put)
         val body = JSONObject().put("points", array)
         when (val result = request("POST", serverUrl, "/api/device/locations", token, body)) {
@@ -316,6 +449,27 @@ class ApiClient {
         )
     }
 
+    private fun RawResult.Failure.toMobileFailure(): ApiResult.Failure = when {
+        kind == FailureKind.NETWORK -> ApiResult.Failure(kind, message)
+        status == 401 -> ApiResult.Failure(
+            FailureKind.UNAUTHORIZED,
+            message.ifBlank { "This linked session is no longer valid. Link this phone again." },
+            401,
+        )
+        status == 429 -> ApiResult.Failure(
+            FailureKind.RATE_LIMITED,
+            "The server is rate limiting this request. Try again shortly.",
+            status,
+            retryAfterSec,
+        )
+        status != null && status >= 500 -> ApiResult.Failure(
+            FailureKind.HTTP,
+            "The Beacon server is having trouble. Try again shortly.",
+            status,
+        )
+        else -> ApiResult.Failure(kind, message, status)
+    }
+
     private fun RawResult.Failure.toApiFailure(): ApiResult.Failure = when {
         kind == FailureKind.NETWORK -> ApiResult.Failure(kind, message)
         status == 401 -> ApiResult.Failure(
@@ -335,6 +489,74 @@ class ApiClient {
             status,
         )
         else -> ApiResult.Failure(kind, message, status)
+    }
+
+    private fun JSONObject.requireMobileToken(name: String, prefix: String): String {
+        val value = optString(name)
+        if (!value.startsWith(prefix) || value.length > 200) {
+            throw JSONException("Invalid mobile token")
+        }
+        return value
+    }
+
+    private fun JSONObject.requireMillis(name: String): Long {
+        val millis = parseMillis(optString(name))
+        if (millis <= 0) throw JSONException("Invalid timestamp")
+        return millis
+    }
+
+    private fun parseMillis(value: String?): Long {
+        if (value.isNullOrBlank()) return 0L
+        return try {
+            Instant.parse(value).toEpochMilli()
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun JSONObject.toLinkedDevice(): LinkedDevice? {
+        val id = optString("id")
+        if (id.isBlank() || id.length > 64) return null
+        val name = optString("name").trim().ifBlank { "Android device" }.take(80)
+        val model = optString("model").trim().take(60)
+        val status = if (optString("status") == "lost") "lost" else "active"
+        val presence = when (optString("presence")) {
+            "online", "stale" -> optString("presence")
+            else -> "offline"
+        }
+        val battery = optInt("batteryLevel", -1)
+        val charging = if (isNull("isCharging")) null else optBoolean("isCharging")
+        val lastSeen = parseMillis(optString("lastSeenAt")).takeIf { it > 0 }
+        return LinkedDevice(
+            id = id,
+            name = name,
+            model = model,
+            status = status,
+            presence = presence,
+            batteryLevel = battery.takeIf { it in 0..100 },
+            isCharging = charging,
+            lastSeenAt = lastSeen,
+            lastLocation = optJSONObject("lastLocation")?.toLinkedLocation(),
+        )
+    }
+
+    private fun JSONObject.toLinkedLocation(): LinkedDeviceLocation? {
+        val latitude = optDouble("latitude", Double.NaN)
+        val longitude = optDouble("longitude", Double.NaN)
+        val accuracy = optDouble("accuracyM", Double.NaN)
+        val recordedAt = parseMillis(optString("recordedAt"))
+        if (!latitude.isFinite() || !longitude.isFinite()) return null
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
+        if (!accuracy.isFinite() || accuracy !in 0.0..100_000.0) return null
+        if (recordedAt <= 0) return null
+        return LinkedDeviceLocation(
+            latitude = latitude,
+            longitude = longitude,
+            accuracyM = accuracy,
+            recordedAt = recordedAt,
+            provider = optString("provider").take(40),
+            isMocked = optBoolean("isMocked", false),
+        )
     }
 
     private fun JSONObject.toConfig(): DeviceConfig {
@@ -424,6 +646,7 @@ class ApiClient {
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 25_000
         private const val MAX_RESPONSE_CHARS = 1_000_000
+        private const val MAX_LINKED_DEVICES = 50
 
         fun normalizeServerUrl(value: String): String? {
             val trimmed = value.trim().trimEnd('/')

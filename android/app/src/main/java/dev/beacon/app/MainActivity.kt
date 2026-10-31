@@ -8,22 +8,25 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.fragment.app.FragmentActivity
 import dev.beacon.app.media.PhotoProcessor
 import dev.beacon.app.security.DeviceAdmin
 import dev.beacon.app.ui.BeaconApp
 import dev.beacon.app.ui.BeaconViewModel
 import java.io.File
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val viewModel: BeaconViewModel by viewModels()
     private var captureFile: File? = null
     private var captureUri: Uri? = null
+    private var pendingBiometricSuccess: (() -> Unit)? = null
 
     private val locationPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -100,6 +103,8 @@ class MainActivity : ComponentActivity() {
                     viewModel.setAllowScreenshots(enabled)
                     applyScreenshotPolicy()
                 },
+                onRequestBiometric = ::requestBiometric,
+                onOpenAccountLink = ::openAccountLink,
             )
         }
     }
@@ -203,6 +208,74 @@ class MainActivity : ComponentActivity() {
             openCamera()
         } else {
             cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    /**
+     * Local gate in front of the MFA reset. The server still requires the
+     * account password, so a stolen unlocked phone alone cannot recover the
+     * account. Only a strong biometric is accepted.
+     */
+    private fun requestBiometric(onSuccess: () -> Unit) {
+        val manager = BiometricManager.from(this)
+        if (
+            manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) !=
+            BiometricManager.BIOMETRIC_SUCCESS
+        ) {
+            viewModel.notify(
+                "Set up a fingerprint or strong face unlock in Android settings first.",
+            )
+            return
+        }
+        pendingBiometricSuccess = onSuccess
+        val prompt = BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(
+                    result: BiometricPrompt.AuthenticationResult,
+                ) {
+                    val callback = pendingBiometricSuccess
+                    pendingBiometricSuccess = null
+                    callback?.invoke()
+                }
+
+                override fun onAuthenticationError(
+                    errorCode: Int,
+                    errString: CharSequence,
+                ) {
+                    pendingBiometricSuccess = null
+                    if (
+                        errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                        errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                        errorCode != BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        viewModel.notify(errString.toString())
+                    }
+                }
+            },
+        )
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Confirm it is you")
+                .setSubtitle("Unlock two-factor recovery for this Beacon account")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .setNegativeButtonText("Cancel")
+                .build(),
+        )
+    }
+
+    private fun openAccountLink(url: String): Boolean {
+        return try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                },
+            )
+            true
+        } catch (_: Exception) {
+            viewModel.notify("No browser is available to approve the link.")
+            false
         }
     }
 

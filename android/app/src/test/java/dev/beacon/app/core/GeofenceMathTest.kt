@@ -46,4 +46,34 @@ class GeofenceMathTest {
         val fence = GeofenceInfo("1", "Edge", 0.0, 0.0, kotlin.math.ceil(distance).toInt())
         assertTrue(GeofenceMath.containing(listOf(fence), 1.0, 0.0) != null)
     }
+
+    @Test
+    fun bearingCardinalDirections() {
+        assertEquals(
+            0.0,
+            GeofenceMath.bearingDegrees(0.0, 0.0, 1.0, 0.0),
+            0.01,
+        )
+        assertEquals(
+            90.0,
+            GeofenceMath.bearingDegrees(0.0, 0.0, 0.0, 1.0),
+            0.01,
+        )
+        assertEquals(
+            180.0,
+            GeofenceMath.bearingDegrees(0.0, 0.0, -1.0, 0.0),
+            0.01,
+        )
+        assertEquals(
+            270.0,
+            GeofenceMath.bearingDegrees(0.0, 0.0, 0.0, -1.0),
+            0.01,
+        )
+    }
+
+    @Test
+    fun bearingIsAlwaysNormalised() {
+        val bearing = GeofenceMath.bearingDegrees(51.5, -0.12, 51.4, -0.2)
+        assertTrue("bearing out of range: $bearing", bearing in 0.0..<360.0)
+    }
 }

@@ -5,6 +5,7 @@ export type EmailTemplate =
   | "mfa_code"
   | "mfa_enabled"
   | "mfa_disabled"
+  | "mfa_reset"
   | "new_login"
   | "geofence"
   | "offline"
@@ -27,6 +28,10 @@ export type EmailPayload =
   | {
       template: "mfa_enabled" | "mfa_disabled";
       data: { name: string; when: string };
+    }
+  | {
+      template: "mfa_reset";
+      data: { name: string; when: string; device: string };
     }
   | {
       template: "new_login";
@@ -267,9 +272,34 @@ export function renderEmail(payload: EmailPayload): RenderedEmail {
         }),
       };
     }
-    case "new_login": {
+    case "mfa_reset": {
       const { name, when, device } = payload.data;
       return {
+        subject: "Two-factor authentication was reset",
+        text: `Hello ${name},\n\nTwo-factor authentication on your Beacon account was reset from ${device} on ${when}.\n\nYour password is still required. Every other browser and mobile session was signed out, and a new authenticator must be enrolled before the dashboard can be used again.\n\nIf this was not you, reset your password immediately and contact the operator.\n`,
+        html: layout({
+          preheader: "A linked phone reset two-factor authentication.",
+          title: "Two-factor authentication was reset",
+          bodyHtml:
+            paragraph(`Hello ${name},`) +
+            paragraph(
+              "Two-factor authentication was reset from a linked phone. Your password is still required, but the old authenticator and recovery codes no longer work.",
+            ) +
+            detailTable([
+              ["Device", device],
+              ["Reset", when],
+            ]) +
+            paragraph(
+              "Every other browser and mobile session was signed out. Sign in with your password and enroll a new authenticator to restore dashboard access.",
+            ) +
+            muted(
+              "If this was not you, reset your password immediately and contact the operator. Beacon support will never ask for your password or a one-time code.",
+            ),
+        }),
+      };
+    }
+    case "new_login": {
+      const { name, when, device } = payload.data;      return {
         subject: "New sign-in to Beacon",
         text: `Hello ${name},\n\nA new session was created on ${when}.\n\nDevice: ${device}\n\nIf this was not you, change your password and revoke the session.\n`,
         html: layout({

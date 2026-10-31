@@ -2,7 +2,7 @@
 
 Beacon is honest about what a phone app can and cannot do. This page is the list of things that will not work, may work slowly, or require a decision before you rely on Beacon for a real emergency.
 
-**Read this before deploying.** `v0.1.0` has not had an independent security audit or a physical-device field trial.
+**Read this before deploying.** `v0.1.4` has not had an independent security audit or a physical-device field trial.
 
 ---
 
@@ -42,7 +42,7 @@ Android does not promise exact background schedules.
 
 ### No push on Android yet
 
-The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.0` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
+The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.4` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -100,6 +100,25 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - Signups can be disabled with `ALLOW_SIGNUPS=false`, but there is no invitation system or admin role.
 - A self-hosted operator can read user data. Beacon is not a zero-knowledge service.
 
+### Linked phones, Find My, and MFA reset
+
+- Recovery is **MFA reset only**. There is no password recovery from the Android app. If the password is forgotten, use the email reset flow.
+- A phone must be linked for seven continuous days before it can reset MFA. A new link deliberately cannot rescue a lost authenticator. If both the authenticator and the recovery codes are lost before the trust period, email OTP or the operator is the remaining path.
+- A biometric prompt is only a local gate. The server cannot verify that a human passed it; it verifies the mobile session and the account password.
+- The phone that performs the reset stays linked. All web sessions and all other linked phones are revoked, and a new factor must be enrolled.
+- A linked phone can see the name, model, presence, battery, and latest location of every active device on the account. It cannot read history, photos, commands, or settings.
+- Unlinking clears the local token even if the server cannot be reached, but the server row may remain until it is revoked under **Settings → Security → Linked phones** or the refresh token expires.
+- If the account is deleted, the device link and both mobile tokens stop working on the next request.
+
+### Find My direction
+
+- The arrow is a straight-line bearing, not a walking or driving route. It does not know about roads, rivers, buildings, or entrances.
+- Distance is calculated from this phone's current fix and the other device's last uploaded fix. Either error is carried into the result; a stale destination is labelled as stale.
+- The compass uses the platform rotation-vector and magnetometer. Metal, magnets, car dashboards, and indoor spaces can distort the heading. A phone without a magnetometer falls back to true north.
+- The other device must have uploaded a fix. A phone that has never checked in, or whose queue is still offline, shows no direction.
+- Mocked locations are flagged but cannot be proved false. A modified client can make the arrow point anywhere.
+- The app does not use Play services, so it cannot draw an indoor map or use Google's fused orientation. **Open in Maps** is the right tool for the final approach.
+
 ---
 
 ## 8. Deployment and operations
@@ -120,7 +139,7 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - Android 8.0+ only. iOS and Windows clients do not exist yet.
 - The web dashboard is responsive and installable as a PWA, but it is not a substitute for the Android app: a browser cannot provide continuous background location.
 - The Android UI is English-only and has not had a formal accessibility audit.
-- Android unit tests cover version comparison for the updater; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
+- Android unit tests cover version comparison, geofence distance/bearing math, and PKCE verification; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
 - The app has been exercised on an API 36 emulator. It has not been tested on a physical handset, across OEM skins, or through a full battery cycle.
 
 ---
@@ -128,12 +147,14 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 ## 10. Security assurance
 
 - No independent penetration test or code audit has been commissioned.
-- The web unit suite covers cryptography, hashing, TOTP, geofence math, and email ordering. It does not exercise API routes against a live database.
+- The web unit suite covers cryptography, hashing, TOTP, geofence math, PKCE, and email ordering. It does not exercise API routes against a live database.
 - No end-to-end test covers pairing → ingest → command → acknowledgement → photo against Postgres.
 - Dependabot and a CI workflow are included, but you must enable alerts and keep dependencies current.
 - Certificate pinning is not implemented; a compromised system CA, or a rooted device with a modified trust store, can intercept Android traffic. User-installed CAs are not trusted.
 - The ten-failure account lockout is a denial-of-service lever: someone who knows an account's email address can lock it for 15 minutes. Per-IP limits raise the cost but do not remove it.
 - Device bearer tokens are long-lived. A rooted device can expose its token while the app runs; revoke the device from the dashboard if that happens.
+- Mobile refresh tokens live for 30 days, but are single-use and rotate. A copied token that is replayed revokes the session family; a copied token that is used before the real phone refreshes is indistinguishable from the phone.
+- The `beacon://account-linked` custom scheme can be intercepted by another app. PKCE and the app-side `state` check stop the exchange, but the legitimate app may lose the callback. Verified App Links are the upgrade path.
 - Relay, Resend, FCM, and the unverified `beacon://pair` custom scheme are trust boundaries. A compromised provider or a malicious pairing link can observe or redirect a pairing attempt, although the app displays the target server before pairing.
 - Audit logs record hashed IPs, not raw addresses. They are append-only from the app, but a database administrator can alter them.
 - The Android release build is minified with R8, but no reproducible-build attestation is published.

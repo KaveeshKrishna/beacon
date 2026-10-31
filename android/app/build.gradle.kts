@@ -44,8 +44,8 @@ android {
         applicationId = "dev.beacon.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.1.4"
         resourceConfigurations += listOf("en")
         buildConfigField("String", "BEACON_BASE_URL", "\"$beaconBaseUrl\"")
     }
@@ -109,6 +109,8 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("androidx.activity:activity-compose:1.12.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")

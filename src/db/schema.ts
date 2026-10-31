@@ -35,6 +35,16 @@ export const users = pgTable(
       withTimezone: true,
     }),
 
+    /**
+     * Set when two-factor was reset from a trusted linked phone. While true,
+     * the account can sign in with its password but cannot use the dashboard
+     * until a fresh factor is enrolled.
+     */
+    mfaEnrollmentRequired: boolean("mfa_enrollment_required")
+      .notNull()
+      .default(false),
+    mfaResetAt: timestamp("mfa_reset_at", { withTimezone: true }),
+
     emailProviderPriority: text("email_provider_priority")
       .notNull()
       .default("default"),
@@ -241,6 +251,74 @@ export const devices = pgTable(
     uniqueIndex("devices_token_uq").on(table.tokenHash),
     index("devices_user_idx").on(table.userId),
     index("devices_last_seen_idx").on(table.lastSeenAt),
+  ],
+);
+
+export const mobileSessions = pgTable(
+  "mobile_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id, { onDelete: "cascade" }),
+    accessTokenHash: text("access_token_hash").notNull(),
+    refreshTokenHash: text("refresh_token_hash").notNull(),
+    /** The token that was just rotated out, used to detect replay. */
+    previousRefreshTokenHash: text("previous_refresh_token_hash"),
+    scope: text("scope").notNull().default("devices:read account:recover"),
+    userAgent: text("user_agent").notNull().default(""),
+    ipHash: text("ip_hash").notNull().default(""),
+    accessExpiresAt: timestamp("access_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    refreshExpiresAt: timestamp("refresh_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("mobile_sessions_access_uq").on(table.accessTokenHash),
+    uniqueIndex("mobile_sessions_refresh_uq").on(table.refreshTokenHash),
+    index("mobile_sessions_user_idx").on(table.userId),
+    index("mobile_sessions_device_idx").on(table.deviceId),
+    index("mobile_sessions_refresh_expiry_idx").on(table.refreshExpiresAt),
+  ],
+);
+
+export const mobileLinkCodes = pgTable(
+  "mobile_link_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    /** PKCE S256 challenge supplied by the phone. */
+    challenge: text("challenge").notNull(),
+    state: text("state").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mobile_link_codes_hash_uq").on(table.codeHash),
+    index("mobile_link_codes_user_idx").on(table.userId),
+    index("mobile_link_codes_expiry_idx").on(table.expiresAt),
   ],
 );
 
