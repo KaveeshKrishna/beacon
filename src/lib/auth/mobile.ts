@@ -314,6 +314,29 @@ export async function revokeMobileSession(
     );
 }
 
+/**
+ * A pair or reconnect rotates the device token. Any account link held by the
+ * previous install must not outlive that rotation, otherwise a copied refresh
+ * token could keep reading the account after the phone was reset. Reconnect
+ * creates a fresh session immediately; pairing by code leaves the phone
+ * unlinked until the owner links it again.
+ */
+export async function revokeMobileSessionsForDevice(
+  userId: string,
+  deviceId: string,
+): Promise<void> {
+  await db()
+    .update(mobileSessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(mobileSessions.userId, userId),
+        eq(mobileSessions.deviceId, deviceId),
+        isNull(mobileSessions.revokedAt),
+      ),
+    );
+}
+
 export async function revokeOtherMobileSessions(
   userId: string,
   exceptSessionId: string,

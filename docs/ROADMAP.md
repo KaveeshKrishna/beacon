@@ -2,7 +2,7 @@
 
 This roadmap is ordered by risk and user value, not by novelty. Dates are deliberately omitted; a self-hosted security project should not ship a feature to hit a calendar.
 
-`v0.1.0` is a complete vertical slice. The next releases focus on proving it, closing platform gaps, and only then broadening the client surface.
+`v0.1.5` is a complete vertical slice. The next releases focus on proving it, closing platform gaps, and only then broadening the client surface.
 
 ---
 
@@ -31,7 +31,7 @@ This roadmap is ordered by risk and user value, not by novelty. Dates are delibe
 
 - Start a disposable Postgres service in GitHub Actions.
 - Apply migrations.
-- Exercise signup → verify → login → pair → ingest → command → ack → photo → unpair.
+- Exercise signup → verify → login → pair → ingest → reconnect → command → ack → photo → unpair.
 - Assert cross-account access returns `404`.
 
 **Exit:** CI fails on a broken migration or auth boundary, with no production credentials.

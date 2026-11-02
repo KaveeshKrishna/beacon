@@ -98,6 +98,16 @@ export const createPairingCodeSchema = z.object({
   deviceName: z.string().trim().max(80).optional(),
 });
 
+/**
+ * A stable, opaque fingerprint computed on the phone. It is 32 bytes of hex,
+ * never a raw Android identifier.
+ */
+const installHash = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-f0-9]{64}$/, "Invalid install fingerprint.");
+
 export const pairDeviceSchema = z.object({
   code: z.string().trim().min(6).max(16),
   name: z.string().trim().min(1).max(80),
@@ -105,6 +115,7 @@ export const pairDeviceSchema = z.object({
   model: z.string().trim().max(80).optional().default(""),
   androidVersion: z.string().trim().max(40).optional().default(""),
   appVersion: z.string().trim().max(40).optional().default(""),
+  installHash: installHash.optional(),
 });
 
 export const locationPointSchema = z.object({
@@ -257,6 +268,22 @@ export const mobileExchangeSchema = z.object({
   code: z.string().min(20).max(200),
   verifier: pkceVerifier,
   state: pkceState,
+});
+
+export const deviceReconnectApproveSchema = z.object({
+  deviceId: uuid,
+  challenge: pkceChallenge,
+  state: pkceState,
+  installHash,
+});
+
+export const deviceReconnectExchangeSchema = z.object({
+  code: z.string().min(20).max(200),
+  verifier: pkceVerifier,
+  state: pkceState,
+  installHash,
+  appVersion: z.string().trim().max(40).optional().default(""),
+  androidVersion: z.string().trim().max(40).optional().default(""),
 });
 
 export const mobileRefreshSchema = z.object({

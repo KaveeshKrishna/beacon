@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FormMessage, Input } from "@/components/ui/field";
 import { apiFetch, errorMessage } from "@/lib/client-api";
 import { cn } from "@/lib/cn";
+import { safeNextPath } from "@/lib/safe-path";
 
 type Method = "totp" | "email" | "recovery";
 
@@ -18,7 +19,7 @@ const labels: Record<Method, string> = {
   recovery: "Recovery code",
 };
 
-export function MfaForm() {
+export function MfaForm({ next }: { next?: string }) {
   const router = useRouter();
   const [methods, setMethods] = useState<Method[]>([]);
   const [method, setMethod] = useState<Method>("totp");
@@ -66,7 +67,7 @@ export function MfaForm() {
       });
       sessionStorage.removeItem("beacon_mfa_methods");
       sessionStorage.removeItem("beacon_mfa_email");
-      router.replace(result.redirect ?? "/app");
+      router.replace(safeNextPath(next) ?? result.redirect ?? "/app");
       router.refresh();
     } catch (caught) {
       setError(errorMessage(caught));

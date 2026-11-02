@@ -221,6 +221,12 @@ export const devices = pgTable(
     androidVersion: text("android_version").notNull().default(""),
     appVersion: text("app_version").notNull().default(""),
     tokenHash: text("token_hash").notNull(),
+    /**
+     * SHA-256 of the app signing identity plus Android ID, reported by the
+     * phone. It lets a reinstall claim the same device row instead of creating
+     * a duplicate. Never exposed by the browser or API responses.
+     */
+    installHash: text("install_hash"),
     trackingProfile: text("tracking_profile").notNull().default("balanced"),
     status: text("status").notNull().default("active"),
     config: jsonb("config")
@@ -251,6 +257,9 @@ export const devices = pgTable(
     uniqueIndex("devices_token_uq").on(table.tokenHash),
     index("devices_user_idx").on(table.userId),
     index("devices_last_seen_idx").on(table.lastSeenAt),
+    uniqueIndex("devices_install_uq")
+      .on(table.userId, table.installHash)
+      .where(sql`${table.installHash} is not null`),
   ],
 );
 
@@ -319,6 +328,39 @@ export const mobileLinkCodes = pgTable(
     uniqueIndex("mobile_link_codes_hash_uq").on(table.codeHash),
     index("mobile_link_codes_user_idx").on(table.userId),
     index("mobile_link_codes_expiry_idx").on(table.expiresAt),
+  ],
+);
+
+export const deviceReconnectCodes = pgTable(
+  "device_reconnect_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    /** PKCE S256 challenge supplied by the unpaired phone. */
+    challenge: text("challenge").notNull(),
+    state: text("state").notNull(),
+    /**
+     * The install fingerprint that requested the reconnect. The exchange must
+     * present the same value, so the code cannot be redeemed by another phone
+     * that intercepts the custom-scheme callback.
+     */
+    installHash: text("install_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("device_reconnect_codes_hash_uq").on(table.codeHash),
+    index("device_reconnect_codes_user_idx").on(table.userId),
+    index("device_reconnect_codes_expiry_idx").on(table.expiresAt),
   ],
 );
 

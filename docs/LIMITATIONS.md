@@ -2,7 +2,7 @@
 
 Beacon is honest about what a phone app can and cannot do. This page is the list of things that will not work, may work slowly, or require a decision before you rely on Beacon for a real emergency.
 
-**Read this before deploying.** `v0.1.4` has not had an independent security audit or a physical-device field trial.
+**Read this before deploying.** `v0.1.5` has not had an independent security audit or a physical-device field trial.
 
 ---
 
@@ -12,7 +12,7 @@ These are not bugs and cannot be fixed by better code:
 
 | Limit | Consequence |
 | --- | --- |
-| Uninstall or factory reset | The app, its token, and the local queue are gone. No installed product can survive this without device-owner provisioning. |
+| Uninstall or factory reset | The app, its token, and the local queue are gone. The server row survives, so a reinstall can reconnect if the account is accessible. A factory reset changes the install fingerprint, so the old row must be confirmed in the browser or replaced. |
 | Power off / dead battery | No location, no heartbeat, no command handling. The dashboard shows the last known point and a stale timestamp. |
 | Safe mode | Third-party apps do not run. |
 | Location turned off | No fix. The app may still check in if data is available. |
@@ -42,7 +42,7 @@ Android does not promise exact background schedules.
 
 ### No push on Android yet
 
-The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.4` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
+The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.5` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -77,6 +77,8 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - Offline alerts are evaluated by the maintenance route. On Vercel Hobby that is once a day unless an external scheduler calls it more often.
 - Alert state has cooldowns: offline 24 h, low battery 12 h, SIM change 6 h. A resolved-then-recurring condition may wait for the cooldown.
 - Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event. The app's automatic interval adaptation uses the fence geometry returned with the last sync and the fix just taken, so a crossing is noticed at the next check-in rather than instantly.
+- The map-based fence editor needs network access for OpenFreeMap tiles. Without tiles the map is blank, though the radius slider and presets still work. The app allows 50 m–5 km; the server accepts any radius in its own validation range.
+- The outside-fence check-in value is a device-local preference, not an account setting. It is not synced to the dashboard and must be set again after an app data wipe. It applies only in Automatic mode and only when at least one fence exists.
 
 ---
 
@@ -109,6 +111,8 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - A linked phone can see the name, model, presence, battery, and latest location of every active device on the account. It cannot read history, photos, commands, or settings.
 - Unlinking clears the local token even if the server cannot be reached, but the server row may remain until it is revoked under **Settings → Security → Linked phones** or the refresh token expires.
 - If the account is deleted, the device link and both mobile tokens stop working on the next request.
+- A reinstall loses the mobile session. Reconnect restores it and restarts the seven-day recovery trust clock; pairing by code reuses the device row but leaves the phone unlinked. The owner must reconnect or link the phone again.
+- A reconnect can only claim a row whose install fingerprint is absent or matches this phone. A row already bound to a different fingerprint is never overwritten; pair the phone as a new device instead.
 
 ### Find My direction
 
@@ -139,7 +143,7 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - Android 8.0+ only. iOS and Windows clients do not exist yet.
 - The web dashboard is responsive and installable as a PWA, but it is not a substitute for the Android app: a browser cannot provide continuous background location.
 - The Android UI is English-only and has not had a formal accessibility audit.
-- Android unit tests cover version comparison, geofence distance/bearing math, and PKCE verification; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
+- Android unit tests cover version comparison, geofence distance/bearing and circle geometry, check-in interval arithmetic, and PKCE verification; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
 - The app has been exercised on an API 36 emulator. It has not been tested on a physical handset, across OEM skins, or through a full battery cycle.
 
 ---

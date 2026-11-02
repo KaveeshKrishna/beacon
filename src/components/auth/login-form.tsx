@@ -8,6 +8,7 @@ import { PasswordInput } from "@/components/auth/password-input";
 import { Button } from "@/components/ui/button";
 import { Field, FormMessage, Input } from "@/components/ui/field";
 import { apiFetch, errorMessage } from "@/lib/client-api";
+import { safeNextPath } from "@/lib/safe-path";
 
 type LoginResponse = {
   mfaRequired: boolean;
@@ -34,6 +35,8 @@ export function LoginForm() {
         body: JSON.stringify({ email, password }),
       });
 
+      const next = safeNextPath(searchParams.get("next"));
+
       if (result.mfaRequired) {
         sessionStorage.setItem(
           "beacon_mfa_methods",
@@ -42,21 +45,11 @@ export function LoginForm() {
         if (result.email) {
           sessionStorage.setItem("beacon_mfa_email", result.email);
         }
-        router.push("/mfa");
+        router.push(next ? `/mfa?next=${encodeURIComponent(next)}` : "/mfa");
         return;
       }
 
-      const next = searchParams.get("next");
-      let destination = result.redirect ?? "/app";
-      if (next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\")) {
-        try {
-          if (new URL(next, window.location.origin).origin === window.location.origin) {
-            destination = next;
-          }
-        } catch {
-          // Fall back to the server-provided destination.
-        }
-      }
+      const destination = next ?? result.redirect ?? "/app";
       router.replace(destination);
       router.refresh();
     } catch (caught) {

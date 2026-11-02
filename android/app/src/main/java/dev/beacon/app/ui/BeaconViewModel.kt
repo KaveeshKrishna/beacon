@@ -9,8 +9,11 @@ import dev.beacon.app.BuildConfig
 import dev.beacon.app.BeaconApplication
 import dev.beacon.app.account.AccountRepository
 import dev.beacon.app.account.Pkce
+import dev.beacon.app.core.InstallIdentity
 import dev.beacon.app.core.Pairing
 import dev.beacon.app.core.PendingAccountLink
+import dev.beacon.app.core.PendingReconnect
+import dev.beacon.app.core.TrackingIntervals
 import dev.beacon.app.location.TrackingScheduler
 import dev.beacon.app.media.PhotoProcessor
 import dev.beacon.app.network.ApiClient
@@ -43,6 +46,8 @@ data class PairingUiState(
     val prefilledCode: String = "",
     val prefilledServer: String = BuildConfig.BEACON_BASE_URL,
     val inviteLoaded: Boolean = false,
+    val reconnectPending: Boolean = false,
+    val reconnectUrl: String = "",
 )
 
 data class Feedback(
@@ -126,6 +131,12 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     val account: StateFlow<AccountUiState> = _account.asStateFlow()
 
     init {
+        // A reconnect may have been started before Android killed the process
+        // while the owner was approving it in the browser. Keep the waiting
+        // banner so the request can be resumed or cancelled.
+        container.prefs.pendingReconnect
+            ?.takeIf { reconnectPendingFresh(it) }
+            ?.let { _pairing.update { state -> state.copy(reconnectPending = true) } }
         syncAccountState()
         cleanupExpiredPhoto()
         autoCheckForUpdates()
@@ -144,6 +155,7 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
         when (uri.host?.lowercase()) {
             "pair" -> handlePairInvite(uri)
             "account-linked" -> handleAccountLinkCallback(uri)
+            "reconnected" -> handleReconnectCallback(uri)
         }
     }
 
@@ -157,6 +169,203 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                 inviteLoaded = code.isNotBlank(),
                 error = null,
             )
+        }
+    }
+
+    /**
+     * Start the account-centric reconnect flow for a reinstalled phone. The
+     * browser signs in, confirms which linked device this is, and returns a
+     * one-time code through `beacon://reconnected`. The PKCE verifier stays on
+     * this phone; only the one-way install hash is included in the browser URL.
+     */
+    fun beginReconnect(serverInput: String, nameInput: String): String? {
+        val server = ApiClient.normalizeServerUrl(serverInput)
+        if (server == null) {
+            _pairing.update { it.copy(error = "Enter a valid HTTPS server address.") }
+            return null
+        }
+        if (container.prefs.pairing() != null) {
+            _pairing.update { it.copy(error = "This device is already paired.") }
+            return null
+        }
+
+        val installHash = InstallIdentity.hash(app)
+        if (installHash == null) {
+            _pairing.update {
+                it.copy(error = "Android did not provide a stable install identity. Pair with a code instead.")
+            }
+            return null
+        }
+
+        val verifier = Pkce.verifier()
+        val state = Pkce.state()
+        val pending = PendingReconnect(
+            serverUrl = server,
+            verifier = verifier,
+            state = state,
+            installHash = installHash,
+            createdAt = System.currentTimeMillis(),
+        )
+        container.prefs.pendingReconnect = pending
+
+        val name = nameInput.trim().ifBlank { defaultDeviceName() }.take(80)
+        val url = reconnectUrl(server, name, verifier, state, installHash)
+        _pairing.update {
+            it.copy(error = null, reconnectPending = true, reconnectUrl = url)
+        }
+        return url
+    }
+
+    fun resumeReconnect(): String? {
+        val pending = container.prefs.pendingReconnect
+        if (pending == null || !reconnectPendingFresh(pending)) {
+            container.prefs.pendingReconnect = null
+            _pairing.update {
+                it.copy(
+                    reconnectPending = false,
+                    reconnectUrl = "",
+                    error = "That reconnect request expired. Start again.",
+                )
+            }
+            return null
+        }
+        val name = defaultDeviceName()
+        val url = reconnectUrl(
+            pending.serverUrl,
+            name,
+            pending.verifier,
+            pending.state,
+            pending.installHash,
+        )
+        _pairing.update { it.copy(reconnectPending = true, reconnectUrl = url, error = null) }
+        return url
+    }
+
+    fun cancelReconnect() {
+        container.prefs.pendingReconnect = null
+        _pairing.update { it.copy(reconnectPending = false, reconnectUrl = "") }
+    }
+
+    private fun reconnectUrl(
+        serverUrl: String,
+        name: String,
+        verifier: String,
+        state: String,
+        installHash: String,
+    ): String {
+        val base = serverUrl.trimEnd('/')
+        return "$base/app/reconnect?state=$state" +
+            "&challenge=${Pkce.challenge(verifier)}" +
+            "&install=$installHash" +
+            "&name=${Uri.encode(name.take(60))}" +
+            "&manufacturer=${Uri.encode(Build.MANUFACTURER.take(80))}" +
+            "&model=${Uri.encode(Build.MODEL.take(80))}"
+    }
+
+    private fun reconnectPendingFresh(pending: PendingReconnect): Boolean =
+        System.currentTimeMillis() - pending.createdAt <= RECONNECT_MAX_AGE_MS
+
+    private fun handleReconnectCallback(uri: Uri) {
+        val pending = container.prefs.pendingReconnect ?: return
+        val code = uri.getQueryParameter("code").orEmpty()
+        val state = uri.getQueryParameter("state").orEmpty()
+
+        if (!reconnectPendingFresh(pending)) {
+            container.prefs.pendingReconnect = null
+            _pairing.update {
+                it.copy(
+                    reconnectPending = false,
+                    reconnectUrl = "",
+                    error = "That reconnect response expired. Start again.",
+                )
+            }
+            return
+        }
+        if (!statesMatch(state, pending.state)) {
+            // A different app can send our custom scheme. A wrong state must
+            // not destroy a request the owner is still completing.
+            _pairing.update {
+                it.copy(error = "This reconnect response did not come from this phone.")
+            }
+            return
+        }
+        if (code.isBlank() || code.length > 200) {
+            container.prefs.pendingReconnect = null
+            _pairing.update {
+                it.copy(
+                    reconnectPending = false,
+                    reconnectUrl = "",
+                    error = "That reconnect response was invalid. Start again.",
+                )
+            }
+            return
+        }
+
+        _pairing.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            when (
+                val result = container.api.reconnectExchange(
+                    serverUrl = pending.serverUrl,
+                    code = code,
+                    verifier = pending.verifier,
+                    state = pending.state,
+                    installHash = pending.installHash,
+                    appVersion = BuildConfig.VERSION_NAME.take(40),
+                    androidVersion = Build.VERSION.RELEASE.take(40),
+                )
+            ) {
+                is ApiResult.Success -> {
+                    val now = System.currentTimeMillis()
+                    container.prefs.pendingReconnect = null
+                    container.prefs.savePairing(
+                        Pairing(
+                            deviceId = result.value.deviceId,
+                            token = result.value.token,
+                            serverUrl = pending.serverUrl,
+                            deviceName = result.value.deviceName,
+                            ownerName = result.value.ownerName,
+                        ),
+                    )
+                    container.prefs.mobileSession = dev.beacon.app.core.MobileSession(
+                        serverUrl = pending.serverUrl,
+                        accessToken = result.value.accessToken,
+                        refreshToken = result.value.refreshToken,
+                        accessExpiresAt = result.value.accessExpiresAt,
+                        refreshExpiresAt = result.value.refreshExpiresAt,
+                        sessionCreatedAt = result.value.sessionCreatedAt,
+                        linkedAt = now,
+                        accountName = result.value.accountName,
+                        accountEmailMasked = result.value.accountEmailMasked,
+                        deviceId = result.value.deviceId,
+                        deviceName = result.value.deviceName,
+                    )
+                    _pairing.value = PairingUiState()
+                    syncAccountState()
+                    TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+                    TrackingScheduler.syncSoon(app)
+                    container.refresh()
+                    checkForUpdates(manual = false)
+                    _feedback.value = Feedback(
+                        "Device reconnected. Tracking is back on.",
+                        false,
+                    )
+                }
+                is ApiResult.Failure -> {
+                    if (result.kind == FailureKind.NETWORK) {
+                        _pairing.update { it.copy(busy = false, error = result.message) }
+                    } else {
+                        container.prefs.pendingReconnect = null
+                        _pairing.update {
+                            it.copy(
+                                busy = false,
+                                reconnectPending = false,
+                                reconnectUrl = "",
+                                error = "That reconnect response expired. Start again.",
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -477,6 +686,7 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                 model = Build.MODEL.take(80),
                 androidVersion = Build.VERSION.RELEASE.take(40),
                 appVersion = BuildConfig.VERSION_NAME.take(40),
+                installHash = InstallIdentity.hash(app),
             )
             when (result) {
                 is ApiResult.Success -> {
@@ -490,11 +700,24 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                     _pairing.value = PairingUiState()
+                    if (result.value.reconnected) {
+                        // Pairing rotates the token and the server revokes the
+                        // old account link, so do not keep stale tokens locally.
+                        container.prefs.mobileSession = null
+                        syncAccountState()
+                    }
                     TrackingScheduler.scheduleFromPreferences(app, container.prefs)
                     TrackingScheduler.syncSoon(app)
                     container.refresh()
                     checkForUpdates(manual = false)
-                    _feedback.value = Feedback("Device paired. Grant the permissions below.", false)
+                    _feedback.value = Feedback(
+                        if (result.value.reconnected) {
+                            "Device reconnected. Existing history and geofences are kept."
+                        } else {
+                            "Device paired. Grant the permissions below."
+                        },
+                        false,
+                    )
                 }
                 is ApiResult.Failure -> {
                     _pairing.update { it.copy(busy = false, error = result.message) }
@@ -516,6 +739,29 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                 "Check-in set to automatic."
             } else {
                 "Check-in set to every $minutes minute${if (minutes == 1) "" else "s"}."
+            },
+            false,
+        )
+    }
+
+    /**
+     * The interval used only while the phone is outside every fence. It has no
+     * effect on a fixed check-in interval or when no fences exist.
+     */
+    fun setOutsideGeofenceInterval(minutes: Int) {
+        val value = minutes.coerceIn(
+            TrackingIntervals.MIN_OVERRIDE_MINUTES,
+            TrackingIntervals.MAX_OVERRIDE_MINUTES,
+        )
+        container.prefs.outsideGeofenceMinutes =
+            if (minutes <= TrackingIntervals.FOLLOW_PROFILE) 0 else value
+        TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+        container.refresh()
+        _feedback.value = Feedback(
+            if (minutes <= TrackingIntervals.FOLLOW_PROFILE) {
+                "Outside fences now follows the dashboard profile."
+            } else {
+                "Outside fences will check in every $minutes minute${if (minutes == 1) "" else "s"}."
             },
             false,
         )
@@ -575,6 +821,21 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     fun closeGeofenceDialog() {
         if (_geofence.value.creating) return
         _geofence.value = GeofenceUiState()
+    }
+
+    /** Move the draft circle after the owner taps a new point on the map. */
+    fun setGeofenceCenter(latitude: Double, longitude: Double) {
+        val draft = _geofence.value
+        if (!draft.open || draft.creating || draft.locating) return
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return
+        _geofence.update {
+            it.copy(
+                latitude = latitude,
+                longitude = longitude,
+                accuracyM = null,
+                error = null,
+            )
+        }
     }
 
     fun createGeofence(nameInput: String, radiusM: Int) {
@@ -930,5 +1191,6 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
 
     private companion object {
         const val UPDATE_CHECK_GAP_MS = 12L * 60 * 60 * 1000
+        const val RECONNECT_MAX_AGE_MS = 15L * 60 * 1000
     }
 }

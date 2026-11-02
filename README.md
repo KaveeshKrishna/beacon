@@ -8,7 +8,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 [![Next.js](https://img.shields.io/badge/Next.js-15.5-000)](https://nextjs.org)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)](https://developer.android.com)
 
-> **Status:** `v0.1.4` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
+> **Status:** `v0.1.5` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
 
 ---
 
@@ -20,8 +20,9 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 | Offline | Encrypted SQLite queue (Android Keystore AES-GCM), ordered upload, duplicate-safe ingestion, last-known location preserved across outages |
 | Control | Locate now, ring, lock screen, lost mode, owner message, sync now, photo request |
 | Photos | User-mediated camera capture, JPEG validation, AES-256-GCM at rest, per-device cap and 30-day retention |
-| Geofences | Server-side enter/exit evaluation on ingest, deduplicated events, in-app and email notifications, in-app creation at the current location |
-| Check-in | Automatic adapts inside/outside fences; fixed 1–60 minute intervals; foreground service under 15 minutes |
+| Geofences | Server-side enter/exit evaluation on ingest, deduplicated events, in-app and email notifications, map-drawn circular fences with a draggable radius |
+| Check-in | Automatic adapts inside/outside fences; a separate outside-fence interval; fixed 1–60 minute intervals; foreground service under 15 minutes |
+| Devices | One account with multiple phones; install fingerprint reuses the existing device row after reinstall or re-pair; browser-confirmed reconnect restores tracking without a duplicate |
 | SIM resilience | Immediate check-in on SIM-state change; opt-in screen lock on SIM removal |
 | Accounts | Argon2id passwords, opaque sessions, TOTP, email OTP, recovery codes, session management, audit log |
 | Find My | Browser-approved account link, linked-device list, distance and true-north compass direction, Maps hand-off |
@@ -36,7 +37,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 ```
  Android app                         Vercel (Next.js 15)                Neon Postgres
  ┌──────────────────────┐   HTTPS   ┌────────────────────────┐   TLS   ┌──────────────────┐
- │ Compose UI           │ ────────▶ │ /api/device/*          │ ──────▶ │ 17 tables        │
+ │ Compose UI           │ ────────▶ │ /api/device/*          │ ──────▶ │ 20 tables        │
  │ WorkManager + FGS    │  bearer   │ /api/devices/*         │  pooled │ encrypted fields │
  │ encrypted SQLite     │ ◀──────── │ /api/auth/*            │ ◀────── │ encrypted photos │
  │ Android Keystore     │  commands │ MapLibre + OpenFreeMap │         │ rate limits      │
@@ -45,7 +46,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
          └── best-effort SMS fallback           └── Relay / Resend (optional)
 ```
 
-The web app never stores a device password. Pairing exchanges a short-lived, one-use code for a per-device bearer token; only an HMAC of that token is stored. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The web app never stores a device password. Pairing exchanges a short-lived, one-use code for a per-device bearer token; only an HMAC of that token is stored. The app also sends a SHA-256 install fingerprint (Android ID, signing certificate, and package), so a reinstall claims the existing device row instead of creating a duplicate. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
 
@@ -110,7 +111,7 @@ Vercel Hobby allows only one cron run per day. Offline alerts therefore need an 
 - Opaque 256-bit session tokens; only HMAC-SHA-256 hashes reach the database
 - AES-256-GCM encryption for TOTP secrets, SMS numbers, FCM tokens, and photo bytes
 - TOTP replay protection, email OTP attempt limits, single-use recovery codes
-- Browser-approved mobile links with PKCE S256, single-use codes, rotating refresh tokens, and replay revocation
+- Browser-approved mobile links and device reconnects with PKCE S256, single-use codes, rotating refresh tokens, and replay revocation
 - Tier 1 MFA reset only after seven days of linking, `BIOMETRIC_STRONG`, and password re-verification; all other sessions are revoked
 - Origin and content-type checks on state-changing requests; strict CSP with a per-request nonce
 - Database-backed fixed-window rate limits on auth, pairing, ingest, commands, and photos
@@ -152,7 +153,7 @@ scripts/               Brand asset generation
 | [docs/EMAIL.md](docs/EMAIL.md) | Relay and Resend setup, priority, failover, logs |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Monitoring, key rotation, incidents, retention |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | What Android and the free stack cannot do |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.4` |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.5` |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and security policy |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and review standards |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations and enforcement |

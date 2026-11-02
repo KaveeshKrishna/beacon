@@ -2,7 +2,7 @@
 
 This document describes what Beacon protects, who it protects against, and where the limits are. It is written for self-hosters and contributors, not as a marketing page. If a control is not implemented, it is listed under residual risk rather than implied.
 
-**Last reviewed:** October 2026, for `v0.1.4`.
+**Last reviewed:** November 2026, for `v0.1.5`.
 
 ---
 
@@ -15,6 +15,8 @@ This document describes what Beacon protects, who it protects against, and where
 | Device bearer token | Critical | Android Keystore–sealed preference; HMAC in `devices.token_hash` |
 | Mobile access/refresh token | Critical | Android Keystore–sealed preference; HMACs in `mobile_sessions`; access 15 min, refresh 30 days |
 | Mobile link code | High | Five-minute, single-use code; HMAC in `mobile_link_codes`; PKCE verifier never leaves the phone |
+| Device reconnect code | High | Ten-minute, single-use code; HMAC in `device_reconnect_codes`; PKCE verifier never leaves the phone |
+| Install fingerprint | Medium | SHA-256 of `ANDROID_ID`, signing certificate, and package; opaque hash in `devices.install_hash` |
 | Device biometric | Critical | Android biometric hardware; never sent to the server |
 | TOTP secret / recovery codes | Critical | AES-GCM ciphertext / HMAC hashes; plaintext shown once |
 | Location history | High | `locations` rows; TLS to Neon; no field-level encryption |
@@ -77,13 +79,13 @@ Someone uses Beacon to track another person without consent.
 
 **Residual:** Beacon cannot verify consent. It is not a covert surveillance tool, and the project does not support using it as one. Hosters are responsible for applicable law.
 
-### G. Stolen linked phone or malicious callback app
+### G. Stolen linked phone, reinstall, or malicious callback app
 
-Has an unlocked phone with an approved account link, or registers a competing `beacon://` handler to intercept the link callback.
+Has an unlocked phone with an approved account link, reinstalls the app to claim an existing device row, or registers a competing `beacon://` handler to intercept the link or reconnect callback.
 
-**Mitigations:** The mobile token is narrow (`devices:read account:recover`), access lives 15 minutes, refresh rotates and revokes on replay, and the app compares the callback `state` before exchanging a code. PKCE keeps the verifier on the phone, so an intercepted code cannot be exchanged. MFA reset additionally requires `BIOMETRIC_STRONG`, the account password, a link at least seven days old, and explicit confirmation; it revokes every other session and emails the owner.
+**Mitigations:** The mobile token is narrow (`devices:read account:recover`), access lives 15 minutes, refresh rotates and revokes on replay, and the app compares the callback `state` before exchanging a code. PKCE keeps the verifier on the phone, so an intercepted link or reconnect code cannot be exchanged. A reconnect also requires a signed-in browser approval and a matching install fingerprint; a row already bound to another fingerprint is never overwritten. Pairing or reconnecting rotates the device token and revokes the row's previous mobile sessions. MFA reset additionally requires `BIOMETRIC_STRONG`, the account password, a link at least seven days old, and explicit confirmation; it revokes every other session and emails the owner.
 
-**Residual:** An unlocked, already-linked phone with the password can reset MFA. A malicious app can still race the custom-scheme callback, but cannot complete the exchange without the verifier. Verified App Links are the documented upgrade path.
+**Residual:** An unlocked, already-linked phone with the password can reset MFA. A malicious app can still race the custom-scheme callback, but cannot complete the exchange without the verifier. A reinstall on the same phone with the same signing key and `ANDROID_ID` can reclaim the row after browser approval; that is the intended recovery path. Verified App Links are the documented upgrade path.
 
 ---
 
@@ -105,7 +107,7 @@ Has an unlocked phone with an approved account link, or registers a competing `b
 
 - The server trusts the database and its own environment.
 - The server does **not** trust client-supplied identity, timestamps, coordinates, or device models. It validates shape and ranges, binds tokens to a device row, and enforces per-user ownership joins.
-- The browser does not receive device tokens, password hashes, TOTP secrets, or mobile refresh tokens. It only returns a short-lived, single-use link code through the custom scheme.
+- The browser receives the opaque install hash so it can highlight the matching device, but never device tokens, password hashes, TOTP secrets, mobile refresh tokens, or the PKCE verifier. It only returns a short-lived, single-use link or reconnect code through the custom scheme.
 - The phone's device token and mobile token are separate capabilities. A mobile token cannot issue commands; a device token cannot read sibling devices or reset MFA.
 - OpenFreeMap sees tile requests from the browser (IP, approximate area). It does not receive Beacon account data. A self-hoster can swap the style URL.
 - Relay/Resend receive recipient addresses and email bodies. FCM receives a device token and a command notification when a client has registered one; the current Android app does not.
@@ -126,6 +128,9 @@ Has an unlocked phone with an approved account link, or registers a competing `b
 | Stolen mobile access token | 15-minute TTL, HMAC-only storage, scoped to `devices:read account:recover`, revoked with its session |
 | Stolen mobile refresh token | Single-use rotation; replay of a rotated token revokes the session family; device/user validity rechecked on every refresh |
 | Forged or intercepted link callback | PKCE S256 verifier stays on the phone; app-side constant-time `state` comparison; code is single-use and expires in five minutes |
+| Forged or intercepted reconnect callback | Signed-in browser approval, PKCE S256, constant-time `state`, install-fingerprint match, and a single-use code that expires in ten minutes |
+| Reinstall claims another phone's row | A row that already carries a different fingerprint is never overwritten; the owner sees the device name in the browser and must confirm the match |
+| Reusing a copied mobile token after reinstall | Pair and reconnect rotate the device token and revoke the row's previous mobile sessions |
 | Linked phone used to reset MFA | Requires a link older than seven days, `BIOMETRIC_STRONG`, the account password, and `confirm: "RESET"`; rate-limited and audited |
 
 ### Tampering
@@ -189,7 +194,7 @@ Has an unlocked phone with an approved account link, or registers a competing `b
 
 ## 5. Residual risks
 
-These are known and accepted for `v0.1.4`:
+These are known and accepted for `v0.1.5`:
 
 1. **No certificate pinning.** Self-hosting and certificate rotation make pinning a poor default. A compromised system CA, or a rooted device with a modified trust store, can intercept traffic. User-installed CAs are not trusted.
 2. **No hardware-backed attestation.** The server cannot prove the app binary is unmodified. Rooted clients can forge locations.
@@ -209,6 +214,8 @@ These are known and accepted for `v0.1.4`:
 16. **The biometric gate is enforced locally.** The server sees a valid mobile session and the password, not the biometric result. A compromised unlocked phone that already holds the password can reset MFA. The seven-day link age and session revocation limit the blast radius.
 17. **A linked phone can see sibling devices.** It receives the same latest-fix summary as the Find My screen, not history or photos. Anyone holding an unlocked linked phone can see where the other devices are; unlink it or revoke it in the browser.
 18. **Compass direction is approximate.** The arrow mixes two location fixes with a magnetometer heading. Metal, magnets, vehicle dashboards, and indoor spaces distort the compass; the distance is straight-line, not a route.
+19. **Reinstall recovery depends on a stable install fingerprint.** `ANDROID_ID` changes after a factory reset (and can differ on some OEM builds), and a different signing key changes the hash. In those cases the browser can still confirm a legacy or unbound row, but a row already bound to another hash is protected and must be replaced. A reinstall also resets the seven-day recovery trust clock because the mobile session is new.
+20. **Reconnect uses a custom scheme.** Another app can register `beacon://reconnected` and receive the code. PKCE, the install-hash check, and the app-side `state` comparison prevent exchange, but the legitimate app may miss the callback. Reconnect codes expire after 10 minutes and pending app state after 15 minutes.
 
 ---
 
@@ -220,6 +227,7 @@ These are known and accepted for `v0.1.4`:
 - Data export returns account, devices, locations, geofences, commands, and audit metadata as JSON.
 - Account deletion cascades devices, locations, geofences, commands, photos, sessions, and tokens. Email delivery logs are retained without a user link (`user_id` set null) for abuse investigation, then deleted by the 90-day cron.
 - Linking a phone stores only the token HMAC, the PKCE challenge, the callback state, the device id, and the account id. The PKCE verifier and the tokens stay on the phone.
+- Reconnecting stores the opaque install fingerprint on the device row and the reconnect code HMAC, PKCE challenge, state, and expiry in `device_reconnect_codes`. The browser receives only the one-way hash needed to highlight a candidate, never the raw Android ID or the PKCE verifier; the code is deleted by the maintenance cron after use or expiry.
 - A linked phone sees only the current device list and latest fixes needed for Find My. It cannot read location history, photos, commands, or settings.
 - An MFA reset sends a security email naming the performing device and revokes every other session.
 - The Android app explains every permission before asking and never enables a permission silently.
@@ -244,6 +252,7 @@ Use this before exposing an instance to the public internet:
 - [ ] Release APK is signed with a key that is not in the repository.
 - [ ] `FLAG_SECURE` is active in the release build (it is disabled only in debug).
 - [ ] Linked-phone recovery has been tested with a link younger and older than seven days.
+- [ ] Reconnect has been tested after uninstall, after a token rotation, and with a deliberately mismatched install fingerprint.
 - [ ] The owner knows that MFA reset requires the password and a biometric, and that it revokes all other sessions.
 - [ ] Rate limits have been exercised with a load test or manual burst.
 - [ ] Dependency alerts and CI are enabled.

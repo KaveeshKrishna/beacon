@@ -9,6 +9,7 @@ data class BeaconState(
     val lostMode: Boolean,
     val trackingProfile: String,
     val syncIntervalMinutes: Int,
+    val outsideGeofenceMinutes: Int,
     val effectiveIntervalMinutes: Int,
     val geofences: List<GeofenceInfo>,
     val insideGeofenceName: String?,

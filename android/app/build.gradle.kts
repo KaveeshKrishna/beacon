@@ -44,8 +44,8 @@ android {
         applicationId = "dev.beacon.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
         resourceConfigurations += listOf("en")
         buildConfigField("String", "BEACON_BASE_URL", "\"$beaconBaseUrl\"")
     }
@@ -66,6 +66,12 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             signingConfig = signingConfigs.findByName("release")
+            // MapLibre ships a large native library per ABI. Sideloaded
+            // releases target phones, not emulators; keeping x86/x86_64 would
+            // more than double the APK for no real-device benefit.
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -122,6 +128,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.maplibre.gl:android-sdk:13.7.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

@@ -29,6 +29,13 @@
       "when": 1793296733956,
       "tag": "0003_lethal_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793470936438,
+      "tag": "0004_faithful_vivisector",
+      "breakpoints": true
     }
   ]
 }

@@ -157,6 +157,52 @@ export async function listDeviceSummaries(
   );
 }
 
+export type ReconnectCandidate = {
+  id: string;
+  name: string;
+  manufacturer: string;
+  model: string;
+  androidVersion: string;
+  appVersion: string;
+  presence: DeviceSummary["presence"];
+  batteryLevel: number | null;
+  isCharging: boolean | null;
+  lastSeenAt: string | null;
+  lastLocationAt: string | null;
+  matched: boolean;
+};
+
+/**
+ * Devices the owner can choose when a reinstalled phone asks to reconnect.
+ * The install fingerprint itself is compared on the server and never sent to
+ * the browser; only a boolean says which row already matches it.
+ */
+export async function listReconnectCandidates(
+  userId: string,
+  installHash: string,
+): Promise<ReconnectCandidate[]> {
+  const rows = await db()
+    .select()
+    .from(devices)
+    .where(and(eq(devices.userId, userId), isNull(devices.revokedAt)))
+    .orderBy(desc(devices.lastSeenAt), desc(devices.createdAt));
+
+  return rows.map((device) => ({
+    id: device.id,
+    name: device.name,
+    manufacturer: device.manufacturer,
+    model: device.model,
+    androidVersion: device.androidVersion,
+    appVersion: device.appVersion,
+    presence: deviceStatus(device.lastSeenAt),
+    batteryLevel: device.batteryLevel,
+    isCharging: device.isCharging,
+    lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
+    lastLocationAt: device.lastLocationAt?.toISOString() ?? null,
+    matched: device.installHash === installHash,
+  }));
+}
+
 export async function getDeviceForUser(
   userId: string,
   deviceId: string,

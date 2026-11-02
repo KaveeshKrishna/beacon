@@ -6,7 +6,7 @@ The Android client is a native Kotlin app built with Jetpack Compose. It holds n
 - **Minimum Android:** 8.0 (API 26)
 - **Target / compile SDK:** 36
 - **Stack:** Kotlin 2.2.21, AGP 8.13.2, Gradle 8.14.3, Compose BOM 2025.12.01, WorkManager 2.10.5
-- **Size:** the minified release APK is roughly 1.9 MB; the debug APK is roughly 19 MB
+- **Size:** the minified release APK is roughly 24 MB with MapLibre's `arm64-v8a` and `armeabi-v7a` native libraries; the universal debug APK is roughly 68 MB
 
 ---
 
@@ -55,6 +55,8 @@ cd android
 
 Without it, Gradle produces `app-release-unsigned.apk`. That file builds and can be inspected, but it cannot be installed or distributed. See [DEPLOYMENT.md](DEPLOYMENT.md#5-build-and-publish-the-android-app) for keystore creation and verification.
 
+Release builds include only `arm64-v8a` and `armeabi-v7a`; x86/x86_64 are omitted because MapLibre's native library would more than double the APK for emulator-only targets. Debug builds keep all four ABIs so an x86_64 emulator can run them.
+
 ### Server address
 
 Resolution order, highest first:
@@ -75,11 +77,13 @@ beacon://pair?server=https://beacon.example.com&code=ABCD1234
 
 Scanning the QR with a generic camera app opens the pairing screen with both values prefilled. The code remains single-use and expires after 10 minutes.
 
+A reinstalled app should use **Reconnect this phone** instead. The browser signs in, confirms which linked device this phone is, and returns through `beacon://reconnected`. The app keeps the existing device row, so history and geofences survive and tracking restarts immediately.
+
 ---
 
 ## 2. First run
 
-1. **Pair.** Enter the eight-character code from the dashboard. Device name defaults to the manufacturer and model and can be edited.
+1. **Pair or reconnect.** Enter the eight-character code from the dashboard, or tap **Reconnect this phone** after a reinstall and approve it in the browser. Device name defaults to the manufacturer and model and can be edited.
 2. **Grant location.** Fine or coarse location is required for any tracking. Background location ("Allow all the time") is required for periodic work while the app is closed.
 3. **Allow notifications.** Android 13+ asks explicitly. Without it, command notifications, the lost-mode notice, and the photo request are invisible, and Android may refuse the foreground service.
 4. **Optional: SMS fallback.** Grant `SEND_SMS` only if you configure a fallback number in the dashboard. SMS is a last resort and costs carrier rates.
@@ -132,7 +136,9 @@ Automatic follows the dashboard profile and, when the server has geofences for t
 | `balanced` | 60 min | 15 min |
 | `high` | 30 min | 15 min |
 
-Fences can be created from the dashboard or from the app itself: **Geofences → Add current place** takes a fresh high-accuracy fix, asks for a name and a 100 m–2 km radius, and creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry only decides the next check-in.
+The check-in card also exposes an **outside fences** value. Choose **Follow profile** or a fixed 5, 10, 15, 30, 60, or 120 minutes. The override is device-local, applies only in Automatic mode when at least one fence exists, and is used only while the phone is outside every fence. It never changes a fixed check-in interval. The card shows the actual inside and outside values currently in effect, so the schedule is visible rather than implied.
+
+Fences can be created from the dashboard or drawn in the app: **Geofences → Add**. The editor is a full-screen map. Tap the map to move the centre, drag the orange radius handle, or use the slider and presets (50 m–5 km). It creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry only decides the next check-in.
 
 Adaptation is evaluated when a check-in happens, using the fix that was just taken. A phone that leaves a fence is noticed at its next check-in, not at the moment it crosses the boundary. Instant exit detection would need Google Play services' `GeofencingClient` or an already-running foreground service, and Beacon deliberately avoids a Play services dependency.
 
@@ -144,6 +150,8 @@ An optional account link lets one phone see the other devices on the same Beacon
 - The account link adds a second, narrow mobile session with `devices:read account:recover`. It cannot issue commands or change settings.
 
 **Linking.** Tap **Account → Link this phone**. The app generates a PKCE verifier, its S256 challenge, and a random `state`, then opens the browser at `/app/link-device`. The owner signs in, checks the device name, and approves. The browser returns through `beacon://account-linked?code=...&state=...`. Before exchanging the code the app compares `state` in constant time; a callback with the wrong state is ignored, so a malicious app that guesses the custom scheme cannot attach its own code. The verifier never leaves the phone. The link code is single-use and expires after five minutes.
+
+**Reconnecting after reinstall.** A fresh install has no token and no mobile session, but the phone's install fingerprint is stable. Tap **Reconnect this phone**, enter the server, and the app opens `/app/reconnect` with a PKCE challenge, `state`, and the install hash. The signed-in owner confirms the matching linked device. The browser returns a 10-minute, single-use code through `beacon://reconnected`; the app verifies `state` and install hash, rotates the device token, and receives a fresh mobile session. Tracking is scheduled again immediately, and Find My works without a second browser approval. The row is reused, so history and geofences are not lost and no duplicate device appears.
 
 **Linked phones.** The account screen lists every active device on the account with its presence, battery, and latest fix. Selecting another device shows:
 
@@ -265,7 +273,9 @@ This is a best-effort breadcrumb, not a control channel. Beacon never sends comm
 - No token, coordinate, or command payload is logged.
 - `allowBackup=false`; data extraction rules exclude app data.
 - Geofence names and geometry are cached in app-private preferences so automatic scheduling works offline. They are not written to logs or exported.
-- Account links use a PKCE S256 exchange plus an app-side constant-time `state` check. The mobile access token lasts 15 minutes; the rotating refresh token lasts 30 days and is rejected if replayed.
+- The install fingerprint is a SHA-256 of `ANDROID_ID`, the app signing certificate, and the package name. It is sent only as an opaque hash and is bound to one device row.
+- Account links and reconnects use a PKCE S256 exchange plus an app-side constant-time `state` check. A reconnect code also verifies the install fingerprint before rotating the device token. The mobile access token lasts 15 minutes; the rotating refresh token lasts 30 days and is rejected if replayed.
+- Pairing or reconnecting rotates the device token and revokes the row's previous mobile sessions, so a copied link token cannot outlive the link the owner sees.
 - Account recovery requires a link at least seven days old, `BIOMETRIC_STRONG`, and the account password. The server verifies the password and revokes all other sessions.
 - `FLAG_SECURE` on release builds prevents screenshots and screen recording of the app (opt-out in Settings).
 - Lock on SIM removal is opt-in and uses device-admin `lockNow()` only after a READY→ABSENT transition. It is a deterrent, not a wipe, and a thief can bypass it by never removing the SIM.
@@ -303,8 +313,8 @@ The app explains each permission in context. It never requests a permission in t
 dev.beacon.app
 ├── BeaconApplication.kt      App container, startup, state snapshot
 ├── MainActivity.kt           Deep links, permission flows, camera, biometric prompt, FLAG_SECURE
-├── account/                  PKCE link, token rotation, recovery eligibility, logout
-├── core/                     Preferences, Keystore crypto, UI state model
+├── account/                  PKCE link, reconnect, token rotation, recovery eligibility, logout
+├── core/                     Preferences, intervals, install identity, Keystore crypto, UI state model
 ├── data/                     Location point, queue, device status readers
 ├── location/                 Sampler, WorkManager scheduler
 ├── network/                  HttpURLConnection API client and DTOs
@@ -315,7 +325,7 @@ dev.beacon.app
 ├── security/                 Device admin receiver and wrapper
 ├── sms/                      Rate-limited SMS fallback
 ├── media/                    Alarm player, JPEG preparation
-└── ui/                       Compose screens, components, theme, view model
+└── ui/                       Compose screens, components, theme, view model; map-based geofence editor
 ```
 
 State flows from `AppContainer` into `BeaconViewModel`; there is no second source of truth. The sync mutex is process-wide, so a manual sync, a worker, and the lost-mode poll cannot race each other.
@@ -332,7 +342,7 @@ cd android
 ./gradlew :app:lintRelease
 ```
 
-Unit tests cover version comparison for the in-app updater, geofence distance/bearing math, and PKCE verification; there is no instrumentation suite yet. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
+Unit tests cover version comparison for the in-app updater, geofence distance/bearing and circle geometry, check-in interval arithmetic (including the outside-fence override), and PKCE verification; there is no instrumentation suite yet. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
 
 ```bash
 adb shell am start -n dev.beacon.app.debug/dev.beacon.app.MainActivity
@@ -349,6 +359,8 @@ The app writes almost nothing to logcat by design. Use the in-app status line, t
 | --- | --- | --- |
 | "Enter a valid HTTPS server address" | HTTP, user info, query, or missing host | Use the exact `https://` origin |
 | Pairing returns `invalid_code` | Code used, expired, or mistyped | Generate a new code in the dashboard |
+| Reconnect says this device is linked to a different phone | The selected row already has another install fingerprint | Choose the correct device, or pair this phone as a new device |
+| "That reconnect response expired" | The browser code is older than 10 minutes, or the app was rebuilt/reinstalled mid-flow | Start **Reconnect this phone** again |
 | Commands take 15–60 minutes | No FCM; WorkManager is inexact | Use lost mode for a 2-minute poll, or open the app |
 | Lost mode says the service was refused | Android 12+ background FGS restriction | Open the app, then enable lost mode again |
 | No tracking with the screen off | Background location denied or OEM battery saver | Grant "Allow all the time"; exempt from battery optimization |

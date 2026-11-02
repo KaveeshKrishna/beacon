@@ -13,16 +13,22 @@ export async function getOptionalUser(): Promise<AuthSession | null> {
   return getSession();
 }
 
-export async function requireUser(): Promise<AuthSession> {
+function loginUrl(nextPath?: string): string {
+  return nextPath ? `/login?next=${encodeURIComponent(nextPath)}` : "/login";
+}
+
+export async function requireUser(nextPath?: string): Promise<AuthSession> {
   const session = await getSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(loginUrl(nextPath));
   if (session.user.mfaEnrollmentRequired) redirect("/mfa/setup");
-  if (!isFullyAuthenticated(session)) redirect("/login");
+  if (!isFullyAuthenticated(session)) redirect(loginUrl(nextPath));
   return session;
 }
 
-export async function requireVerifiedUser(): Promise<AuthSession> {
-  const session = await requireUser();
+export async function requireVerifiedUser(
+  nextPath?: string,
+): Promise<AuthSession> {
+  const session = await requireUser(nextPath);
   if (!session.user.emailVerifiedAt) redirect("/verify-email?pending=1");
   return session;
 }

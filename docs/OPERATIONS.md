@@ -63,7 +63,7 @@ The route rejects missing `CRON_SECRET` with `503`, and a wrong token with `401`
 
 Each run:
 
-1. Deletes expired sessions, pending MFA challenges, email tokens/codes, pairing codes, and rate-limit rows.
+1. Deletes expired sessions, pending MFA challenges, email tokens/codes, pairing codes, mobile link codes, device reconnect codes, rate-limit rows, and expired or revoked mobile sessions.
 2. Deletes locations older than `LOCATION_RETENTION_DAYS`.
 3. Deletes photos older than 30 days.
 4. Deletes email logs older than 90 days, geofence events older than 180 days, and audit logs older than `AUDIT_RETENTION_DAYS`.
@@ -85,6 +85,9 @@ A run is not transactional. If it fails partway, earlier deletes remain and late
 | Email tokens | Expiry, then 30 days for used rows |
 | Email codes | Expiry | Fixed |
 | Pairing codes | Expiry, then 30 days for used rows | Fixed |
+| Mobile link codes | 5-minute expiry, then 30 days for used rows | Fixed |
+| Device reconnect codes | 10-minute expiry, then 30 days for used rows | Fixed |
+| Mobile sessions | 30 days after expiry or revocation | Fixed |
 | Rate limits | 2 days | Fixed |
 | Locations | `LOCATION_RETENTION_DAYS` (90) | Environment |
 | Photos | 30 days | Fixed |
@@ -94,7 +97,7 @@ A run is not transactional. If it fails partway, earlier deletes remain and late
 
 The latest location is not deleted early; retention is based on `recorded_at`, so a device that stops reporting will eventually have its whole history removed. The dashboard will show "no recent location" after that point.
 
-Account deletion cascades devices, locations, geofences, commands, photos, sessions, and tokens. `email_logs.user_id` is set to `null` and the row remains until the 90-day cleanup, so delivery abuse can still be investigated without retaining an account link.
+Account deletion cascades devices, locations, geofences, commands, photos, sessions, mobile sessions, mobile link codes, reconnect codes, and tokens. `email_logs.user_id` is set to `null` and the row remains until the 90-day cleanup, so delivery abuse can still be investigated without retaining an account link.
 
 ---
 
@@ -111,7 +114,7 @@ Encrypts:
 | `devices.fcm_token_enc` | `fcm:<deviceId>` |
 | `device_photos.data_enc` | `photo:<deviceId>` |
 
-AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.0`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
+AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.5`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
 
 To rotate:
 
@@ -239,7 +242,7 @@ Beacon is not a covert surveillance product. If an instance is reported as used 
 
 - Apply dependency updates from Dependabot; run typecheck, lint, tests, and a production build.
 - Verify a database backup restore into a branch.
-- Review audit actions for unexpected admin-level changes (there is no admin role; look for account, MFA, and device events).
+- Review audit actions for unexpected admin-level changes (there is no admin role; look for account, MFA, device, and reconnect events).
 - Confirm the external scheduler is still enabled.
 - Test one device: locate, ring, lost mode, photo.
 

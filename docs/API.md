@@ -6,7 +6,7 @@ Beacon exposes a small JSON API over HTTPS. The dashboard and the Android app us
 - **Device routes** (`/api/device/*`) use a per-device bearer token. They do not use cookies or Origin checks. The phone has no account password.
 - **Mobile account routes** (`/api/mobile/*`) use a narrow, short-lived mobile bearer token obtained after a PKCE approval in the browser. They can list the account's devices, read their latest locations, and perform a Tier 1 MFA reset. They cannot issue commands, change settings, or read history.
 
-There is no API version prefix in `v0.1.4`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
+There is no API version prefix in `v0.1.5`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
 
 ---
 
@@ -107,6 +107,8 @@ Limits are fixed-window counters stored in Postgres, so they survive serverless 
 | Device unpair | 5 / hour per device |
 | Dashboard command creation | 30 / min per user |
 | Mobile link approval | 10 / hour per user |
+| Device reconnect approval | 10 / hour per user |
+| Device reconnect exchange | 30 / 15 min per IP |
 | Mobile token exchange | 30 / 15 min per IP |
 | Mobile token refresh | 60 / 15 min per IP |
 | Mobile device read | 120 / min per mobile session |
@@ -138,7 +140,7 @@ Returns active (non-revoked) devices for the signed-in user, newest activity fir
         "manufacturer": "Google",
         "model": "Pixel 7",
         "androidVersion": "16",
-        "appVersion": "0.1.0",
+        "appVersion": "0.1.5",
         "status": "active",
         "presence": "online",
         "trackingProfile": "balanced",
@@ -497,11 +499,12 @@ Unauthenticated; consumes a pairing code.
   "manufacturer": "Google",
   "model": "Pixel 7",
   "androidVersion": "16",
-  "appVersion": "0.1.0"
+  "appVersion": "0.1.5",
+  "installHash": "9f2c...64 lowercase hex characters..."
 }
 ```
 
-`code` is 6–16 characters after normalization; the app sends eight. `name` is required, 1–80 characters. Optional metadata is truncated server-side.
+`code` is 6–16 characters after normalization; the app sends eight. `name` is required, 1–80 characters. Optional metadata is truncated server-side. `installHash` is optional but sent by 0.1.5 and later: it is the lowercase hex SHA-256 of the Android ID, the app signing certificate, and the package name.
 
 ```json
 {
@@ -511,12 +514,88 @@ Unauthenticated; consumes a pairing code.
     "token": "bc_dev_...",
     "serverTime": "2026-10-23T14:10:00.000Z",
     "ownerName": "Alex",
-    "deviceName": "Pixel 7"
+    "deviceName": "Pixel 7",
+    "reconnected": false
   }
 }
 ```
 
 The token is returned exactly once. Store it immediately in an Android Keystore–sealed preference and never log it. Invalid, expired, already-used, or unverified-account codes all return `400 invalid_pairing_code`. The device limit returns `409 device_limit`.
+
+When `installHash` matches an active device row for the same user, the server rotates that row's token instead of creating a second device and returns `"reconnected": true`. History, geofences, and commands stay attached to the row. A legacy row without a fingerprint is **not** matched by pairing; it must use the reconnect flow, where the owner confirms the device in the browser. A revoked row keeps its hash for audit but releases it when the same install pairs again. Any mobile account link on the reused row is revoked because the device token has rotated; reconnect restores it automatically.
+
+### Reinstalling and reconnecting
+
+Reconnect is the account-centric recovery path. The phone opens a browser page, the signed-in owner confirms which linked device this physical phone is, and the browser returns a short-lived code through `beacon://reconnected`. The app exchanges that code for a fresh device token and a fresh narrow mobile session. No account password ever enters the app.
+
+#### `POST /api/device/reconnect/approve`
+
+Requires a signed-in, verified **web session** (cookie), same-origin `POST`, and JSON.
+
+```json
+{
+  "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
+  "challenge": "S256 challenge, 43 characters",
+  "state": "opaque app state",
+  "installHash": "9f2c...64 lowercase hex characters..."
+}
+```
+
+`deviceId` must belong to the signed-in user. A row that already carries a different `installHash` returns `409 install_mismatch`; the owner must pair this phone as a new device instead. A legacy row without a fingerprint is bound to the supplied hash after the owner's explicit confirmation. The call replaces any previous reconnect code for the same device and inserts a 10-minute, single-use code.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "redirectUrl": "beacon://reconnected?code=...&state=...",
+    "expiresAt": "2026-10-23T14:20:00.000Z",
+    "deviceName": "Pixel 7"
+  }
+}
+```
+
+The browser session can only approve; it never receives the phone's PKCE verifier. `installHash` is stored on the row, never returned by dashboard APIs.
+
+#### `POST /api/device/reconnect/exchange`
+
+Unauthenticated; the one-time code is the credential. Requires JSON and is rate-limited per IP.
+
+```json
+{
+  "code": "opaque reconnect code",
+  "verifier": "the PKCE verifier held by the phone",
+  "state": "the same state sent to approve",
+  "installHash": "9f2c...64 lowercase hex characters...",
+  "appVersion": "0.1.5",
+  "androidVersion": "16"
+}
+```
+
+The server verifies the code hash, state, PKCE S256 challenge, and install hash, then marks the code used atomically. Any mismatch returns `401 invalid_reconnect`; there is no partial success and no way to retry an expired or used code.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
+    "token": "bc_dev_...",
+    "serverTime": "2026-10-23T14:10:00.000Z",
+    "ownerName": "Alex",
+    "deviceName": "Pixel 7",
+    "reconnected": true,
+    "accessToken": "bc_mob_...",
+    "refreshToken": "bc_ref_...",
+    "accessExpiresAt": "2026-10-23T14:25:00.000Z",
+    "refreshExpiresAt": "2026-11-22T14:10:00.000Z",
+    "sessionCreatedAt": "2026-10-23T14:10:00.000Z",
+    "scope": "devices:read account:recover",
+    "device": { "id": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01", "name": "Pixel 7" },
+    "account": { "name": "Alex", "emailMasked": "a***@example.com" }
+  }
+}
+```
+
+Exchange rotates the device token and revokes the device's previous mobile sessions before creating the new one. The new mobile session restores Find My and resets the seven-day recovery trust clock. A deleted user or revoked device returns `401`.
 
 ### `POST /api/device/locations`
 
@@ -598,7 +677,7 @@ Updates device state without a location fix and claims commands.
   "networkType": "cellular",
   "simState": "READY",
   "fcmToken": "optional-fcm-token",
-  "appVersion": "0.1.0",
+  "appVersion": "0.1.5",
   "androidVersion": "16"
 }
 ```
@@ -877,7 +956,7 @@ Lists active mobile links for the signed-in account:
         "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
         "deviceName": "Pixel 7",
         "device": "Android · Chrome",
-        "userAgent": "Beacon/0.1.4 (Android 16)",
+        "userAgent": "Beacon/0.1.5 (Android 16)",
         "createdAt": "2026-10-16T09:00:00.000Z",
         "lastUsedAt": "2026-10-23T14:10:00.000Z",
         "accessExpiresAt": "2026-10-23T14:25:00.000Z",
@@ -962,7 +1041,7 @@ Protected by `Authorization: Bearer <CRON_SECRET>`. `CRON_SECRET` must be at lea
 
 The route is idempotent and safe to call frequently. It:
 
-1. Deletes expired sessions, pending MFA challenges, email tokens/codes, pairing codes, and rate-limit rows.
+1. Deletes expired sessions, pending MFA challenges, email tokens/codes, pairing codes, mobile link codes, device reconnect codes, rate-limit rows, and expired or revoked mobile sessions.
 2. Deletes locations older than `LOCATION_RETENTION_DAYS`.
 3. Deletes photos older than 30 days.
 4. Deletes audit logs older than `AUDIT_RETENTION_DAYS` and email logs older than 90 days.
@@ -1002,6 +1081,9 @@ Schedule it every 5–15 minutes with an external scheduler when using Vercel Ho
 | `breached_password` | 422 | Password found in HIBP |
 | `invalid_password` | 400 | Current password was wrong |
 | `invalid_link` | 401 | Mobile link code invalid, expired, used, or failed PKCE/state |
+| `invalid_reconnect` | 401 | Reconnect code invalid, expired, used, or failed PKCE/state/install match |
+| `install_mismatch` | 409 | Selected device row already belongs to a different install |
+| `install_in_use` | 409 | Install fingerprint is already bound to another active device |
 | `invalid_refresh` | 401 | Mobile refresh token invalid, expired, rotated, or replayed |
 | `recovery_not_ready` | 403 | Linked phone has not completed the seven-day trust period |
 | `mfa_not_enabled` | 409 | MFA reset requested on an account with no factor enabled |
@@ -1046,6 +1128,24 @@ curl -sS https://beacon.example.com/api/device/pair \
 
 The app stores `token` in the Keystore and uses it for every subsequent request. The dashboard never sees the token again.
 
+### Reconnect a reinstalled phone
+
+```bash
+# 1. The signed-in browser approves the device the phone claims to be
+curl -sS https://beacon.example.com/api/device/reconnect/approve \
+  -H 'Origin: https://beacon.example.com' \
+  -H 'Content-Type: application/json' \
+  -b cookies.txt \
+  -d '{"deviceId":"'$DEVICE_ID'","challenge":"'$S256'","state":"'$STATE'","installHash":"'$INSTALL_HASH'"}'
+
+# 2. The returned beacon://reconnected URL opens the app, which exchanges it
+curl -sS https://beacon.example.com/api/device/reconnect/exchange \
+  -H 'Content-Type: application/json' \
+  -d '{"code":"'$CODE'","verifier":"'$VERIFIER'","state":"'$STATE'","installHash":"'$INSTALL_HASH'"}'
+```
+
+The exchanged device token replaces the old one; the same device row, history, and geofences remain. The response also carries a fresh mobile session, so Find My works without a second browser approval.
+
 ### Upload an offline batch and receive commands
 
 ```bash
@@ -1082,4 +1182,4 @@ curl -sS https://beacon.example.com/api/device/commands/ack \
 - `fallbackSmsNumber` is returned only to the authenticated device, decrypted from `devices.fallback_sms_enc`. It is never included in dashboard responses, which expose only `fallbackSmsConfigured`.
 - Location history is returned in ascending time order for map rendering; command history is newest first.
 - A mobile account token is read-only plus recovery. It cannot issue commands, change settings, or read history, even for its own device.
-- The Android client is the reference device implementation. A future iOS or Windows client can implement the same seven device endpoints without changes to the server contract.
+- The Android client is the reference device implementation. A future iOS or Windows client can implement the same device endpoints without changes to the server contract.

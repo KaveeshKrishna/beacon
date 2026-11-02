@@ -105,6 +105,7 @@ class MainActivity : FragmentActivity() {
                 },
                 onRequestBiometric = ::requestBiometric,
                 onOpenAccountLink = ::openAccountLink,
+                onOpenBrowser = ::openAccountLink,
             )
         }
     }

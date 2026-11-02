@@ -8,6 +8,7 @@ data class PairResponse(
     val token: String,
     val ownerName: String,
     val deviceName: String,
+    val reconnected: Boolean,
 )
 
 data class DeviceConfig(
@@ -52,6 +53,20 @@ data class MobileExchangeResponse(
     val accountEmailMasked: String,
     val deviceId: String,
     val deviceName: String,
+)
+
+data class ReconnectResponse(
+    val deviceId: String,
+    val token: String,
+    val ownerName: String,
+    val deviceName: String,
+    val accessToken: String,
+    val refreshToken: String,
+    val accessExpiresAt: Long,
+    val refreshExpiresAt: Long,
+    val sessionCreatedAt: Long,
+    val accountName: String,
+    val accountEmailMasked: String,
 )
 
 data class MobileRefreshResponse(

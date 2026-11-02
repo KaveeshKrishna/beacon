@@ -34,7 +34,7 @@ Beacon is three cooperating systems: a stateless Next.js application, a Postgres
                 │ pooled TLS (Neon serverless driver)
 ┌───────────────▼───────────────┐
 │ Neon Postgres                 │
-│ 17 tables, encrypted fields   │
+│ 20 tables, encrypted fields   │
 │ encrypted photo payloads      │
 │ DB-backed rate limits         │
 └───────────────────────────────┘
@@ -89,13 +89,43 @@ Dashboard: POST /api/devices/pairing-code
   → 8-character code (Crockford-style alphabet), 10-minute TTL, HMAC stored
   → QR/deep link: beacon://pair?server=https://host&code=XXXXXXXX
 
-Android: POST /api/device/pair { code, name, manufacturer, model, ... }
+Android: POST /api/device/pair { code, name, ..., installHash }
   → consume code atomically
-  → generate bc_dev_<256-bit token>
+  → if installHash matches an active device row, reuse it (reconnected)
+  → otherwise generate bc_dev_<256-bit token>
   → store HMAC(token) in devices.token_hash
-  → return token once, plus deviceId and owner display name
+  → return token once, plus deviceId, owner name, and reconnected flag
   → Android seals the token with an Android Keystore AES-GCM key
 ```
+
+The install hash is a SHA-256 over `ANDROID_ID`, the app signing certificate,
+and the package name. It is stable across reinstall and app update but changes
+with a different signing key or a factory reset. A partial unique index on
+`(user_id, install_hash)` makes duplicates impossible under a race.
+
+### Reinstalling and reconnecting
+
+```
+Android: beacon://reconnect?server=https://host
+  → open <APP_URL>/app/reconnect?device=<id>&challenge=<S256>&state=<random>&install=<hash>
+Browser (signed in): confirm which linked device this phone is
+  → POST /api/device/reconnect/approve { deviceId, challenge, state, installHash }
+  → bind install hash to a legacy row; reject a different phone's hash
+  → create a 10-minute, single-use reconnect code
+  → return beacon://reconnected?code=...&state=...
+
+Android: POST /api/device/reconnect/exchange { code, verifier, state, installHash }
+  → verify state, PKCE S256, and install hash
+  → rotate the device token
+  → create a fresh narrow mobile session (devices:read account:recover)
+  → return device token plus mobile access/refresh tokens
+```
+
+Reconnect reuses the same `devices` row, so history, geofences, and commands
+survive. The browser never sends an account password to the phone, and the
+install fingerprint never leaves the phone except as the opaque hash. A
+pairing code issued from the dashboard also reuses the row when the install
+hash matches, but only reconnect restores the account link.
 
 The token is scoped to one device row. There is no account password on the phone, so a compromised device cannot list other devices or change account settings. Revocation is a single column update; the next API request returns `401` and the app wipes its local queue.
 
@@ -127,7 +157,7 @@ pending ──claim──▶ delivered ──ack──▶ completed
    └──expiry──▶ expired ◀──expiry──┘
 ```
 
-- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.0 Android client does not register a token).
+- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.5 Android client does not register a token).
 - The device claims commands on every location upload, heartbeat, and polling cycle.
 - `claimPendingCommands` updates `pending → delivered` in the same transaction window as the read, so two concurrent claims cannot both return the same row in practice.
 - The Android handler returns an ack with `completed`, `failed`, `unsupported`, or `deferred`.
@@ -174,7 +204,10 @@ The command is acknowledged by the photo upload, not by the request handler. If 
 | Table | Purpose | Notes |
 | --- | --- | --- |
 | `pairing_codes` | One-use pairing invitations | 10-minute TTL |
-| `devices` | Device identity, config, revocation | `token_hash`, `fallback_sms_enc`, `fcm_token_enc` |
+| `devices` | Device identity, config, revocation | `token_hash`, `install_hash`, `fallback_sms_enc`, `fcm_token_enc` |
+| `mobile_sessions` | Narrow account link from a phone | access/refresh HMACs, rotation history |
+| `mobile_link_codes` | Browser-approved phone link | 5-minute TTL, single use |
+| `device_reconnect_codes` | Browser-approved reinstall recovery | 10-minute TTL, single use |
 | `locations` | Breadcrumb history | unique `(device_id, client_point_id)` |
 | `geofences` | Circles with enter/exit flags | `last_inside` caches state |
 | `geofence_events` | Deduplicated transitions | 180-day retention |
@@ -218,6 +251,7 @@ Indexes are chosen for the two dominant reads: latest location per device, and l
 - No cookies, no WebView, no logging of Authorization headers or coordinates.
 - `FLAG_SECURE` on release builds blocks screenshots and recents thumbnails.
 - Backups are disabled; the token and queue are additionally encrypted with a non-exportable Keystore key.
+- Reinstall recovery binds a SHA-256 install fingerprint to one device row. A row that already carries a different fingerprint is never overwritten, so one phone cannot claim another phone's history.
 
 ### Trust boundaries and non-goals
 
@@ -267,7 +301,7 @@ Key design choices:
 
 - **No DI framework.** `AppContainer` is constructed once in `Application`; workers and services reach it through the application cast. This keeps startup predictable and avoids reflection in release builds.
 - **No Room.** The offline queue is one table with a hand-written `SQLiteOpenHelper`. The payload is already encrypted JSON; an ORM would add code without adding safety.
-- **No Retrofit.** Seven endpoints and one JSON envelope do not justify the dependency. Timeouts, redirect rejection, and response-size limits are explicit.
+- **No Retrofit.** A handful of endpoints and one JSON envelope do not justify the dependency. Timeouts, redirect rejection, and response-size limits are explicit.
 - **Foreground service only in lost mode.** A permanent tracking notification is a battery and privacy cost that most users do not need. WorkManager handles the baseline.
 - **State is a snapshot.** `BeaconState` is rebuilt from preferences and the queue count; there is no long-lived in-memory state to drift after process death.
 

@@ -1,6 +1,6 @@
 # Deployment
 
-Beacon is designed to run on free infrastructure with no always-on server. The reference stack is **Vercel Hobby + Neon Free + OpenFreeMap**, with optional Relay/Resend for email. Server-side FCM plumbing exists, but the Android client does not register for push in `v0.1.0`.
+Beacon is designed to run on free infrastructure with no always-on server. The reference stack is **Vercel Hobby + Neon Free + OpenFreeMap**, with optional Relay/Resend for email. Server-side FCM plumbing exists, but the Android client does not register for push in `v0.1.5`.
 
 If you change any of these choices, keep three invariants: HTTPS everywhere, a Postgres database with TLS, and a scheduler that can call the maintenance route.
 
@@ -25,7 +25,14 @@ npm ci
 npm run db:migrate
 ```
 
-Migrations live in `drizzle/` and are applied in order. They create all 17 tables. Apply them before the first request; the app validates its environment at boot but does not auto-migrate.
+Migrations live in `drizzle/` and are applied in order. They create all 20 tables. Apply them before the first request; the app validates its environment at boot but does not auto-migrate.
+
+Upgrading to 0.1.5 requires both migrations to be applied before the 0.1.5 server code serves traffic (0.1.4 already required `0003`):
+
+- `drizzle/0003_lethal_gravity.sql` adds the mobile account-linking tables and the MFA reset fields. Login and MFA enrollment fail without it.
+- `drizzle/0004_faithful_vivisector.sql` adds `devices.install_hash`, the partial unique index `devices_install_uq`, and `device_reconnect_codes`. The 0.1.5 reconnect endpoints fail without it.
+
+`db:migrate` applies both in order. Confirm with `SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';` (20 application tables, plus Drizzle's journal table).
 
 > **Never point a production `db:push` at a database with real data.** `db:push` is a development convenience and can drop columns. Use `db:migrate` for deployments.
 
@@ -227,7 +234,7 @@ cd android
 ./gradlew assembleRelease -PbeaconBaseUrl=https://beacon.example.com
 ```
 
-The APK is at `android/app/build/outputs/apk/release/app-release.apk`. Verify the signature:
+The APK is at `android/app/build/outputs/apk/release/app-release.apk`. Release builds include `arm64-v8a` and `armeabi-v7a` only, which keeps the MapLibre native library from doubling the download for emulator ABIs. Verify the signature:
 
 ```bash
 apksigner verify --print-certs app-release.apk
@@ -244,6 +251,7 @@ Upload the APK to a stable HTTPS URL and set `NEXT_PUBLIC_APK_URL`. The landing 
 - [ ] SHA-256 checksum published.
 - [ ] Fresh install pairs, syncs, and survives a reboot.
 - [ ] Upgrade over the previous version keeps the pairing.
+- [ ] Uninstall and reconnect reuses the same device row, keeps history, and restarts tracking without a duplicate.
 - [ ] Lost mode, alarm, lock, and photo request tested on a physical device.
 
 Full build and permission details: [ANDROID.md](ANDROID.md).
@@ -264,7 +272,7 @@ Use the direct (non-pooler) connection string for `pg_dump` when possible. Test 
 
 ### Encryption key
 
-`ENCRYPTION_KEY` is not stored in the database. If you lose it, TOTP secrets, SMS numbers, FCM tokens, and photos become unreadable. Keep at least two offline copies. Rotating it requires a migration that decrypts with the old key and re-encrypts with the new one; there is no built-in rotation command in `v0.1.0` (see [OPERATIONS.md](OPERATIONS.md#4-key-management)).
+`ENCRYPTION_KEY` is not stored in the database. If you lose it, TOTP secrets, SMS numbers, FCM tokens, and photos become unreadable. Keep at least two offline copies. Rotating it requires a migration that decrypts with the old key and re-encrypts with the new one; there is no built-in rotation command in `v0.1.5` (see [OPERATIONS.md](OPERATIONS.md#4-key-management)).
 
 ### Application updates
 
@@ -302,7 +310,9 @@ If you outgrow these, the first upgrade should be Neon storage and a paid Vercel
 | `Invalid environment configuration` at boot | Missing or malformed variable | Compare with `.env.example`; `ENCRYPTION_KEY` must decode to 32 bytes |
 | Login redirects in a loop | `APP_URL` host differs from the browser host | Set `APP_URL` to the exact origin and redeploy |
 | `403 forbidden_origin` | Request came from a different origin | Use the canonical host; check proxy headers |
-| Device gets `401` after pairing | Token revoked, user deleted, or `APP_URL` changed | Re-pair the device; check the device list |
+| Device gets `401` after pairing | Token revoked, user deleted, or `APP_URL` changed | Reconnect if the app was reinstalled, or re-pair; check the device list |
+| Reconnect returns `install_mismatch` | The selected row is already bound to another phone's fingerprint | Choose the correct device or pair this phone as new |
+| Reconnect code is rejected | The 10-minute code expired, was already used, or the app was reinstalled mid-flow | Start the reconnect approval again |
 | Email never arrives | Provider not configured, domain unverified, or dev logging on | Check **Settings → Email delivery**; inspect `email_logs` |
 | Cron returns `503` | `CRON_SECRET` unset | Add it and redeploy |
 | Cron returns `401` | Scheduler header missing or wrong | Use `Authorization: Bearer <secret>` |

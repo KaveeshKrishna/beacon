@@ -216,9 +216,9 @@ export function GeofencesTab({
         <div className="flex items-start gap-2 border-t border-line bg-surface-2/40 px-4 py-3">
           <MapPin className="mt-0.5 size-3 shrink-0 text-faint" />
           <p className="text-[10px] leading-4 text-faint">
-            Geofences are not stored on the phone. They work whenever a fix
-            reaches the server, including points uploaded late from the offline
-            queue.
+            The server evaluates every accepted fix, including points uploaded
+            late from the offline queue. The app caches only the fence geometry
+            so it can choose the next check-in interval while offline.
           </p>
         </div>
       </section>

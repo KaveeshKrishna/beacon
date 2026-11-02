@@ -79,6 +79,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.beacon.app.BuildConfig
 import dev.beacon.app.core.BeaconState
 import dev.beacon.app.core.GeofenceInfo
+import dev.beacon.app.core.TrackingIntervals
 import dev.beacon.app.ui.components.BeaconButton
 import dev.beacon.app.ui.components.BeaconCard
 import dev.beacon.app.ui.components.BeaconOutlinedButton
@@ -119,6 +120,7 @@ fun BeaconApp(
     onAllowScreenshotsChanged: (Boolean) -> Unit,
     onRequestBiometric: (() -> Unit) -> Unit,
     onOpenAccountLink: (String) -> Boolean,
+    onOpenBrowser: (String) -> Boolean,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pairingState by viewModel.pairing.collectAsStateWithLifecycle()
@@ -178,12 +180,23 @@ fun BeaconApp(
                         state = pairingState,
                         defaultDeviceName = viewModel.defaultDeviceName(),
                         onPair = viewModel::pair,
+                        onBeginReconnect = viewModel::beginReconnect,
+                        onResumeReconnect = viewModel::resumeReconnect,
+                        onCancelReconnect = viewModel::cancelReconnect,
+                        onOpenBrowser = onOpenBrowser,
                     )
                 } else if (lostOverlay) {
                     LostScreen(
                         state = state,
                         onSilenceAlarm = viewModel::stopAlarm,
                         onDeviceStatus = { ownerControls = true },
+                    )
+                } else if (geofence.open) {
+                    GeofenceEditor(
+                        state = geofence,
+                        onCenterChange = viewModel::setGeofenceCenter,
+                        onCreate = viewModel::createGeofence,
+                        onClose = viewModel::closeGeofenceDialog,
                     )
                 } else if (showAccount && account.linked) {
                     AccountScreen(
@@ -220,6 +233,7 @@ fun BeaconApp(
                         onOpenSettings = onOpenSettings,
                         onTakePhoto = onTakePhoto,
                         onSyncIntervalChanged = viewModel::setSyncInterval,
+                        onOutsideIntervalChanged = viewModel::setOutsideGeofenceInterval,
                         onAllowScreenshotsChanged = onAllowScreenshotsChanged,
                         onLinkAccount = {
                             val url = viewModel.beginAccountLink()
@@ -239,8 +253,6 @@ fun BeaconApp(
                         },
                         geofence = geofence,
                         onOpenGeofence = viewModel::openGeofenceDialog,
-                        onCloseGeofence = viewModel::closeGeofenceDialog,
-                        onCreateGeofence = viewModel::createGeofence,
                         onDeleteGeofence = viewModel::deleteGeofence,
                         update = update,
                         onCheckForUpdates = { viewModel.checkForUpdates() },
@@ -263,6 +275,10 @@ private fun PairScreen(
     state: PairingUiState,
     defaultDeviceName: String,
     onPair: (String, String, String) -> Unit,
+    onBeginReconnect: (String, String) -> String?,
+    onResumeReconnect: () -> String?,
+    onCancelReconnect: () -> Unit,
+    onOpenBrowser: (String) -> Boolean,
 ) {
     var code by rememberSaveable { mutableStateOf(state.prefilledCode) }
     var server by rememberSaveable { mutableStateOf(state.prefilledServer) }
@@ -420,6 +436,86 @@ private fun PairScreen(
             loading = state.busy,
         )
 
+        Spacer(Modifier.height(26.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "Already used Beacon on this phone?",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Reinstalling keeps the same device row, location history and geofences. Sign in to your Beacon account in the browser and confirm which linked phone this is.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        if (state.reconnectPending) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Accent.copy(alpha = 0.08f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Accent.copy(alpha = 0.3f)),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = Accent,
+                        )
+                        Text(
+                            "Waiting for browser approval",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Finish the approval in your browser, then return here. The code expires after ten minutes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = {
+                                val url = state.reconnectUrl.ifBlank { onResumeReconnect() }
+                                if (url != null && !onOpenBrowser(url)) {
+                                    onCancelReconnect()
+                                }
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp),
+                        ) {
+                            Text("Open browser again", style = MaterialTheme.typography.labelMedium)
+                        }
+                        TextButton(
+                            onClick = onCancelReconnect,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp),
+                        ) {
+                            Text("Cancel", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
+        } else {
+            BeaconOutlinedButton(
+                text = "Reconnect with Beacon account",
+                onClick = {
+                    focus.clearFocus()
+                    val url = onBeginReconnect(server, name)
+                    if (url != null && !onOpenBrowser(url)) {
+                        onCancelReconnect()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.busy,
+                icon = Icons.Rounded.Sync,
+            )
+        }
+
         Spacer(Modifier.height(18.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -465,12 +561,11 @@ private fun HomeScreen(
     onCancelAccountLink: () -> Unit,
     onOpenAccountScreen: () -> Unit,
     onSyncIntervalChanged: (Int) -> Unit,
+    onOutsideIntervalChanged: (Int) -> Unit,
     onAllowScreenshotsChanged: (Boolean) -> Unit,
     onLockOnSimRemovalChanged: (Boolean) -> Unit,
     geofence: GeofenceUiState,
     onOpenGeofence: () -> Unit,
-    onCloseGeofence: () -> Unit,
-    onCreateGeofence: (String, Int) -> Unit,
     onDeleteGeofence: (String) -> Unit,
     update: UpdateUiState,
     onCheckForUpdates: () -> Unit,
@@ -484,6 +579,7 @@ private fun HomeScreen(
 ) {
     var showUnpair by rememberSaveable { mutableStateOf(false) }
     var showInterval by rememberSaveable { mutableStateOf(false) }
+    var showOutsideInterval by rememberSaveable { mutableStateOf(false) }
     val pendingPhoto = state.pendingPhoto?.takeIf { it.expiresAt > System.currentTimeMillis() }
     val statusText = when {
         state.authRevoked -> "Revoked"
@@ -670,71 +766,75 @@ private fun HomeScreen(
         SectionHeader("Protection", "${safeguardCount(state)}/${safeguardTotal(state)} on")
         Spacer(Modifier.height(9.dp))
         BeaconCard {
-            var row = 0
-            val totalRows = safeguardTotal(state)
-            ChecklistRow(
-                icon = Icons.Rounded.MyLocation,
-                title = "Foreground location",
-                description = "Precise or approximate location while the app is open.",
-                done = state.fineLocation || state.coarseLocation,
-                actionLabel = "Allow",
-                onAction = onRequestLocation,
-                last = ++row == totalRows,
-            )
-            ChecklistRow(
-                icon = Icons.Rounded.Map,
-                title = "Background location",
-                description = if (state.fineLocation || state.coarseLocation) {
-                    "Keep working when the screen is off. Android requires All the time."
-                } else {
-                    "Grant foreground location first, then choose All the time."
-                },
-                done = state.backgroundLocation,
-                actionLabel = "All the time",
-                onAction = if (state.fineLocation || state.coarseLocation) {
-                    onRequestBackground
-                } else {
-                    onRequestLocation
-                },
-                last = ++row == totalRows,
-            )
-            ChecklistRow(
-                icon = Icons.Rounded.Notifications,
-                title = "Notifications",
-                description = "Remote messages, alarms and lost-mode status.",
-                done = state.notifications,
-                actionLabel = "Enable",
-                onAction = onRequestNotifications,
-                last = ++row == totalRows,
-            )
-            ChecklistRow(
-                icon = Icons.Rounded.BatteryFull,
-                title = "Battery unrestricted",
-                description = "Reduces Doze delays on aggressive Android builds.",
-                done = state.batteryUnrestricted,
-                actionLabel = "Allow",
-                onAction = onRequestBattery,
-                last = ++row == totalRows,
-            )
-            ChecklistRow(
-                icon = Icons.Rounded.Security,
-                title = "Device admin",
-                description = "Only used to lock the screen on request. No erase or password access.",
-                done = state.deviceAdmin,
-                actionLabel = "Enable",
-                onAction = onRequestAdmin,
-                last = ++row == totalRows,
-            )
-            if (state.fallbackSmsMasked != null) {
+            // Surface is a Box: every child would be stacked on the same
+            // origin unless the rows are placed in a Column.
+            Column {
+                var row = 0
+                val totalRows = safeguardTotal(state)
                 ChecklistRow(
-                    icon = Icons.Rounded.Sms,
-                    title = "SMS fallback",
-                    description = "Sends a map link to ${state.fallbackSmsMasked} only when mobile data is unavailable.",
-                    done = state.sms,
+                    icon = Icons.Rounded.MyLocation,
+                    title = "Foreground location",
+                    description = "Precise or approximate location while the app is open.",
+                    done = state.fineLocation || state.coarseLocation,
                     actionLabel = "Allow",
-                    onAction = onRequestSms,
+                    onAction = onRequestLocation,
                     last = ++row == totalRows,
                 )
+                ChecklistRow(
+                    icon = Icons.Rounded.Map,
+                    title = "Background location",
+                    description = if (state.fineLocation || state.coarseLocation) {
+                        "Keep working when the screen is off. Android requires All the time."
+                    } else {
+                        "Grant foreground location first, then choose All the time."
+                    },
+                    done = state.backgroundLocation,
+                    actionLabel = "All the time",
+                    onAction = if (state.fineLocation || state.coarseLocation) {
+                        onRequestBackground
+                    } else {
+                        onRequestLocation
+                    },
+                    last = ++row == totalRows,
+                )
+                ChecklistRow(
+                    icon = Icons.Rounded.Notifications,
+                    title = "Notifications",
+                    description = "Remote messages, alarms and lost-mode status.",
+                    done = state.notifications,
+                    actionLabel = "Enable",
+                    onAction = onRequestNotifications,
+                    last = ++row == totalRows,
+                )
+                ChecklistRow(
+                    icon = Icons.Rounded.BatteryFull,
+                    title = "Battery unrestricted",
+                    description = "Reduces Doze delays on aggressive Android builds.",
+                    done = state.batteryUnrestricted,
+                    actionLabel = "Allow",
+                    onAction = onRequestBattery,
+                    last = ++row == totalRows,
+                )
+                ChecklistRow(
+                    icon = Icons.Rounded.Security,
+                    title = "Device admin",
+                    description = "Only used to lock the screen on request. No erase or password access.",
+                    done = state.deviceAdmin,
+                    actionLabel = "Enable",
+                    onAction = onRequestAdmin,
+                    last = ++row == totalRows,
+                )
+                if (state.fallbackSmsMasked != null) {
+                    ChecklistRow(
+                        icon = Icons.Rounded.Sms,
+                        title = "SMS fallback",
+                        description = "Sends a map link to ${state.fallbackSmsMasked} only when mobile data is unavailable.",
+                        done = state.sms,
+                        actionLabel = "Allow",
+                        onAction = onRequestSms,
+                        last = ++row == totalRows,
+                    )
+                }
             }
         }
 
@@ -868,12 +968,39 @@ private fun HomeScreen(
                 Text(
                     checkInDescription(state),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (state.syncIntervalMinutes in 1 until 15) Warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (state.effectiveIntervalMinutes in 1 until 15) Warning else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (state.syncIntervalMinutes in 1 until 15) {
+                if (state.syncIntervalMinutes == 0) {
+                    Spacer(Modifier.height(10.dp))
+                    BeaconOutlinedButton(
+                        text = outsideIntervalLabel(state),
+                        onClick = { showOutsideInterval = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = Icons.Rounded.Map,
+                    )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Intervals under 15 minutes run through a foreground service, so Android keeps a notification visible. Battery use rises.",
+                        if (state.geofences.isEmpty()) {
+                            "The outside interval starts applying once you add a geofence."
+                        } else {
+                            "Inside ${state.insideGeofenceName ?: "a fence"}: " +
+                                everyMinutes(TrackingIntervals.automaticInside(state.trackingProfile)) +
+                                ". Outside all fences: " +
+                                everyMinutes(
+                                    TrackingIntervals.automaticOutside(
+                                        state.trackingProfile,
+                                        state.outsideGeofenceMinutes,
+                                    ),
+                                ) + "."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (state.effectiveIntervalMinutes in 1 until 15) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Check-ins under 15 minutes run through a foreground service, so Android keeps a notification visible. Battery use rises.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Warning,
                     )
@@ -887,7 +1014,7 @@ private fun HomeScreen(
         BeaconCard {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    "Draw a circle around a place you trust. Automatic check-in relaxes inside a fence and speeds up outside every fence.",
+                    "Draw a circle around a place you trust. Automatic check-in uses the inside interval here and the outside interval everywhere else.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1153,132 +1280,67 @@ private fun HomeScreen(
         )
     }
 
-    if (geofence.open) {
-        GeofenceDialog(
-            state = geofence,
-            onCreate = onCreateGeofence,
-            onClose = onCloseGeofence,
-        )
-    }
-}
-
-@Composable
-private fun GeofenceDialog(
-    state: GeofenceUiState,
-    onCreate: (String, Int) -> Unit,
-    onClose: () -> Unit,
-) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var radius by rememberSaveable { mutableStateOf(250) }
-
-    LaunchedEffect(state.open) {
-        if (state.open) {
-            name = ""
-            radius = 250
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = { if (!state.creating) onClose() },
-        shape = RoundedCornerShape(16.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        title = {
-            Text("Add current place", style = MaterialTheme.typography.titleLarge)
-        },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                when {
-                    state.locating -> Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = Accent,
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Finding your location…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    state.latitude != null && state.longitude != null -> Text(
-                        "Center: ${"%.5f".format(java.util.Locale.US, state.latitude)}, " +
-                            "${"%.5f".format(java.util.Locale.US, state.longitude)}" +
-                            (state.accuracyM?.let { "  (±${it.toInt()} m)" } ?: ""),
+    if (showOutsideInterval) {
+        AlertDialog(
+            onDismissRequest = { showOutsideInterval = false },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text("Outside geofences", style = MaterialTheme.typography.titleLarge)
+            },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Automatic mode uses a separate interval while the phone is outside every saved place. Choose that interval here. Inside a fence, the profile's inside interval applies.",
                         style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                if (state.error != null) {
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        state.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Danger,
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { if (it.length <= 60) name = it },
-                    label = { Text("Place name") },
-                    placeholder = { Text("Home, work, school") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = FieldColors(),
-                )
-                Spacer(Modifier.height(16.dp))
-                Text("Radius", style = MaterialTheme.typography.titleSmall)
-                listOf(100, 250, 500, 1000, 2000).forEach { option ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { radius = option }
-                            .padding(vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            radiusLabel(option),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (radius == option) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = null,
-                                tint = Accent,
-                                modifier = Modifier.size(18.dp),
+                    listOf(0, 5, 10, 15, 30, 60, 120).forEach { minutes ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showOutsideInterval = false
+                                    onOutsideIntervalChanged(minutes)
+                                }
+                                .padding(vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                if (minutes == 0) {
+                                    "Follow profile (" +
+                                        everyMinutes(
+                                            TrackingIntervals.automaticOutside(
+                                                state.trackingProfile,
+                                                TrackingIntervals.FOLLOW_PROFILE,
+                                            ),
+                                        ) + ")"
+                                } else {
+                                    "Every $minutes minute${if (minutes == 1) "" else "s"}"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
                             )
+                            if (state.outsideGeofenceMinutes == minutes) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = Accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 }
-                Text(
-                    "Your account can alert you on enter and exit. Automatic check-in also relaxes inside a fence and speeds up outside every fence.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onCreate(name, radius) },
-                enabled = !state.creating &&
-                    !state.locating &&
-                    state.latitude != null &&
-                    name.isNotBlank(),
-            ) {
-                Text(if (state.creating) "Creating…" else "Create")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onClose, enabled = !state.creating) {
-                Text("Cancel")
-            }
-        },
-    )
+            },
+            confirmButton = {
+                TextButton(onClick = { showOutsideInterval = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -1342,9 +1404,19 @@ private fun checkInDescription(state: BeaconState): String = when {
     state.geofences.isEmpty() ->
         "Automatic follows the dashboard profile: ${everyMinutes(state.effectiveIntervalMinutes)}."
     state.insideGeofenceName != null ->
-        "Inside ${state.insideGeofenceName}: ${everyMinutes(state.effectiveIntervalMinutes)}. It speeds up after the phone leaves."
+        "Inside ${state.insideGeofenceName}: ${everyMinutes(state.effectiveIntervalMinutes)}. The outside interval applies after the phone leaves."
     else ->
-        "Outside all fences: ${everyMinutes(state.effectiveIntervalMinutes)}. It relaxes inside a fence."
+        "Outside all fences: ${everyMinutes(state.effectiveIntervalMinutes)}. The inside interval applies inside a fence."
+}
+
+private fun outsideIntervalLabel(state: BeaconState): String {
+    val override = state.outsideGeofenceMinutes
+    return if (override <= 0) {
+        "Outside fences: Follow profile (" +
+            everyMinutes(TrackingIntervals.automaticOutside(state.trackingProfile, 0)) + ")"
+    } else {
+        "Outside fences: Every $override minute${if (override == 1) "" else "s"}"
+    }
 }
 
 private fun everyMinutes(minutes: Int): String =

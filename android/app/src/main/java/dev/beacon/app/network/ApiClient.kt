@@ -26,6 +26,7 @@ class ApiClient {
         model: String,
         androidVersion: String,
         appVersion: String,
+        installHash: String?,
     ): ApiResult<PairResponse> = withContext(Dispatchers.IO) {
         val body = JSONObject().apply {
             put("code", code)
@@ -34,6 +35,7 @@ class ApiClient {
             put("model", model)
             put("androidVersion", androidVersion)
             put("appVersion", appVersion)
+            installHash?.let { put("installHash", it) }
         }
         when (val result = request("POST", serverUrl, "/api/device/pair", null, body)) {
             is RawResult.Failure -> result.toApiFailure()
@@ -48,6 +50,62 @@ class ApiClient {
                     token = token,
                     ownerName = data.optString("ownerName"),
                     deviceName = data.optString("deviceName", name),
+                    reconnected = data.optBoolean("reconnected", false),
+                )
+            }
+        }
+    }
+
+    suspend fun reconnectExchange(
+        serverUrl: String,
+        code: String,
+        verifier: String,
+        state: String,
+        installHash: String,
+        appVersion: String,
+        androidVersion: String,
+    ): ApiResult<ReconnectResponse> = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("code", code)
+            put("verifier", verifier)
+            put("state", state)
+            put("installHash", installHash)
+            put("appVersion", appVersion)
+            put("androidVersion", androidVersion)
+        }
+        when (
+            val result = request(
+                "POST",
+                serverUrl,
+                "/api/device/reconnect/exchange",
+                null,
+                body,
+            )
+        ) {
+            is RawResult.Failure -> result.toApiFailure()
+            is RawResult.Success -> parse(result.body) { data ->
+                val token = data.getString("token")
+                if (!token.startsWith("bc_dev_")) {
+                    throw JSONException("Unexpected token")
+                }
+                val deviceId = data.getString("deviceId")
+                if (deviceId.isBlank() || deviceId.length > 64) {
+                    throw JSONException("Unexpected device")
+                }
+                ReconnectResponse(
+                    deviceId = deviceId,
+                    token = token,
+                    ownerName = data.optString("ownerName"),
+                    deviceName = data.optString("deviceName").ifBlank { "Android device" },
+                    accessToken = data.requireMobileToken("accessToken", "bc_mob_"),
+                    refreshToken = data.requireMobileToken("refreshToken", "bc_ref_"),
+                    accessExpiresAt = data.requireMillis("accessExpiresAt"),
+                    refreshExpiresAt = data.requireMillis("refreshExpiresAt"),
+                    sessionCreatedAt = data.requireMillis("sessionCreatedAt"),
+                    accountName = data.optJSONObject("account")
+                        ?.optString("name").orEmpty().take(80),
+                    accountEmailMasked =
+                        data.optJSONObject("account")?.optString("emailMasked").orEmpty().take(120),
                 )
             }
         }

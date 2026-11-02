@@ -153,6 +153,7 @@ class AppContainer(context: Context) {
             lostMode = prefs.lostMode,
             trackingProfile = prefs.trackingProfile,
             syncIntervalMinutes = prefs.syncIntervalMinutes,
+            outsideGeofenceMinutes = prefs.outsideGeofenceMinutes,
             effectiveIntervalMinutes = prefs.effectiveIntervalMinutes(),
             geofences = prefs.geofences,
             insideGeofenceName = prefs.insideGeofenceName,

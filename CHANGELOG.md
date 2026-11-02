@@ -12,6 +12,51 @@ Nothing yet. Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
+## 0.1.5 — 2026-11-02
+
+### Added
+
+- **Account-centric reconnect after reinstall.** The pairing screen now offers **Reconnect this phone**. It opens a browser approval page that lists the account's linked devices, confirms which physical phone is being restored, and returns a 10-minute, single-use code through `beacon://reconnected`. The app exchanges the code with PKCE S256 plus an install-fingerprint check, rotates the device token, restores tracking immediately, and receives a fresh narrow mobile session so Find My works without a second approval.
+- **Install fingerprints prevent duplicate devices.** The app sends a SHA-256 hash of `ANDROID_ID`, the signing certificate, and the package name. Pairing or reconnecting claims the matching active device row instead of creating another one, so history, geofences, and commands survive a reinstall.
+- **Map-drawn geofences.** The app's fence editor is now a full-screen MapLibre map. Tap to move the centre, drag the orange radius handle, or use the slider and presets from 50 m to 5 km. The old preset-only dialog is removed.
+- **Configurable outside-fence check-in.** Automatic mode exposes the interval actually used outside every fence: follow the profile or 5, 10, 15, 30, 60, or 120 minutes. The check-in card shows the effective inside and outside values.
+- **Server reconnect API.** `POST /api/device/reconnect/approve` and `POST /api/device/reconnect/exchange`; install hashes on pairing; `device_reconnect_codes`; a partial unique index on `(user_id, install_hash)`; browser reconnect page at `/app/reconnect`.
+- **Pure interval and identity helpers** (`TrackingIntervals.kt`, `InstallIdentity.kt`) with JVM tests.
+
+### Changed
+
+- **Protection layout fixed.** Checklist rows are wrapped in a `Column` instead of being passed directly to `Surface`, which had stacked the title, description, and action at the same origin.
+- Pairing now sends `installHash` and reports `reconnected`. A re-pair keeps the existing row but does not restore the mobile account link; reconnect does.
+- Pair and reconnect rotate the device credential and revoke the row's previous mobile sessions.
+- The maintenance cron now removes expired mobile link codes, device reconnect codes, and expired or revoked mobile sessions.
+- `versionCode` is 6 and `versionName` is `0.1.5`.
+
+### Security
+
+- Reconnect codes are 10 minutes, single-use, HMAC-stored, and bound to the PKCE challenge, callback state, and install fingerprint. The browser must be signed in and same-origin; the verifier and fingerprint never leave the phone.
+- A device row that already carries a different install fingerprint is never overwritten (`409 install_mismatch` / `install_in_use`). Legacy rows without a fingerprint require explicit owner confirmation in the browser.
+- Revoked rows retain their fingerprint for audit but release it when the same install pairs again, so a normal reinstall is not blocked by history.
+- Reconnect restores the mobile session with the same `devices:read account:recover` scope; it never elevates the device token.
+
+### Fixed
+
+- Protection cards no longer overlap at the top of the home screen.
+- The check-in card now reports the configured outside-fence interval instead of repeating the inside value, and its foreground-service warning follows the interval actually in effect.
+- Reinstalling or re-pairing no longer creates a duplicate device or leaves location tracking off.
+
+### Migration
+
+- `drizzle/0004_faithful_vivisector.sql` adds `devices.install_hash`, the partial unique index `devices_install_uq`, and the `device_reconnect_codes` table. Apply it with migration `0003` before deploying 0.1.5.
+
+### Verification
+
+- `npm run lint`, `npm run typecheck`, `npm test` (54 tests), and `npm run build` — pass.
+- `npm audit --omit=dev` — 0 vulnerabilities.
+- Android unit tests — 20 pass (`PkceTest`, `GeofenceMathTest`, `TrackingIntervalsTest`, `VersionComparisonTest`).
+- Release APK: versionCode 6, versionName 0.1.5, 24,943,099 bytes, SHA-256 `d97939f8e474761748e6a31c8ccc358fb24d33e601a66ca772242303940b265e`, signed with the existing Beacon certificate (`a2eb5d82…f53df4`). Release builds include `arm64-v8a` and `armeabi-v7a`; the debug APK keeps all four ABIs for emulators.
+
+---
+
 ## 0.1.4 — 2026-10-30
 
 ### Added

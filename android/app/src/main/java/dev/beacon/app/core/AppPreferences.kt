@@ -38,6 +38,14 @@ data class PendingAccountLink(
     val createdAt: Long,
 )
 
+data class PendingReconnect(
+    val serverUrl: String,
+    val verifier: String,
+    val state: String,
+    val installHash: String,
+    val createdAt: Long,
+)
+
 class AppPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("beacon.preferences", Context.MODE_PRIVATE)
 
@@ -69,6 +77,7 @@ class AppPreferences(context: Context) {
             // pairing invalidates any old link even if the server is the same.
             remove(KEY_MOBILE_SESSION)
             remove(KEY_PENDING_ACCOUNT_LINK)
+            remove(KEY_PENDING_RECONNECT)
         }
     }
 
@@ -205,6 +214,54 @@ class AppPreferences(context: Context) {
             }
         }
 
+    /**
+     * A reconnect attempt started from the unpaired screen. The verifier is a
+     * secret and is sealed exactly like an account link verifier. The browser
+     * only receives its SHA-256 challenge.
+     */
+    var pendingReconnect: PendingReconnect?
+        get() {
+            val sealed = prefs.getString(KEY_PENDING_RECONNECT, null) ?: return null
+            val raw = KeystoreCrypto.decryptString(sealed) ?: return null
+            return try {
+                val json = org.json.JSONObject(raw)
+                val pending = PendingReconnect(
+                    serverUrl = json.optString("server"),
+                    verifier = json.optString("verifier"),
+                    state = json.optString("state"),
+                    installHash = json.optString("installHash"),
+                    createdAt = json.optLong("createdAt", 0L),
+                )
+                val valid = pending.serverUrl.startsWith("https://") &&
+                    pending.verifier.matches(Regex("^[A-Za-z0-9\\-._~]{43,128}$")) &&
+                    pending.state.matches(Regex("^[A-Za-z0-9_-]{16,128}$")) &&
+                    pending.installHash.matches(Regex("^[a-f0-9]{64}$")) &&
+                    pending.createdAt > 0
+                pending.takeIf { valid }
+            } catch (_: Exception) {
+                null
+            }
+        }
+        set(value) {
+            prefs.edit {
+                if (value == null) {
+                    remove(KEY_PENDING_RECONNECT)
+                } else {
+                    val json = org.json.JSONObject().apply {
+                        put("server", value.serverUrl)
+                        put("verifier", value.verifier)
+                        put("state", value.state)
+                        put("installHash", value.installHash)
+                        put("createdAt", value.createdAt)
+                    }
+                    putString(
+                        KEY_PENDING_RECONNECT,
+                        KeystoreCrypto.encryptString(json.toString()),
+                    )
+                }
+            }
+        }
+
     var lostMode: Boolean
         get() = prefs.getBoolean(KEY_LOST_MODE, false)
         set(value) = prefs.edit { putBoolean(KEY_LOST_MODE, value) }
@@ -222,36 +279,35 @@ class AppPreferences(context: Context) {
         get() = prefs.getInt(KEY_SYNC_INTERVAL, 0).coerceIn(0, 1440)
         set(value) = prefs.edit { putInt(KEY_SYNC_INTERVAL, value.coerceIn(0, 1440)) }
 
-    fun effectiveIntervalMinutes(): Int {
-        val chosen = syncIntervalMinutes
-        if (chosen > 0) return chosen
-        val base = when (trackingProfile) {
-            "low" -> 60
-            "high" -> 15
-            else -> 30
+    /**
+     * The interval used while the phone is outside every fence. 0 follows the
+     * dashboard profile; any other value is a device-local override. Fixed
+     * check-in intervals ignore this because they are obeyed exactly.
+     */
+    var outsideGeofenceMinutes: Int
+        get() = prefs.getInt(KEY_OUTSIDE_INTERVAL, 0).coerceIn(0, 1440)
+        set(value) = prefs.edit {
+            putInt(KEY_OUTSIDE_INTERVAL, value.coerceIn(0, 1440))
         }
-        if (geofences.isEmpty()) return base
 
-        // Inside a place the owner trusts, check in less often. Away from all
-        // of them, check in more often. This only applies to Automatic; a
-        // fixed interval is always obeyed exactly.
+    fun effectiveIntervalMinutes(): Int {
         val inside = insideGeofenceId?.let { id ->
             geofences.any { it.id == id }
         } == true
-        return if (inside) {
-            when (trackingProfile) {
-                "low" -> 60
-                "high" -> 30
-                else -> 60
-            }
-        } else {
-            when (trackingProfile) {
-                "low" -> 30
-                "high" -> 15
-                else -> 15
-            }
-        }
+        return TrackingIntervals.effective(
+            chosenMinutes = syncIntervalMinutes,
+            profile = trackingProfile,
+            hasFences = geofences.isNotEmpty(),
+            inside = inside,
+            outsideOverride = outsideGeofenceMinutes,
+        )
     }
+
+    fun automaticInsideMinutes(): Int =
+        TrackingIntervals.automaticInside(trackingProfile)
+
+    fun automaticOutsideMinutes(): Int =
+        TrackingIntervals.automaticOutside(trackingProfile, outsideGeofenceMinutes)
 
     /**
      * Geometry of the fences known to this device, cached so the scheduler can
@@ -450,9 +506,11 @@ class AppPreferences(context: Context) {
         const val KEY_AUTH_REVOKED = "auth_revoked"
         const val KEY_MOBILE_SESSION = "mobile_session_sealed"
         const val KEY_PENDING_ACCOUNT_LINK = "pending_account_link_sealed"
+        const val KEY_PENDING_RECONNECT = "pending_reconnect_sealed"
         const val KEY_LOST_MODE = "lost_mode"
         const val KEY_TRACKING_PROFILE = "tracking_profile"
         const val KEY_SYNC_INTERVAL = "sync_interval_minutes"
+        const val KEY_OUTSIDE_INTERVAL = "outside_geofence_minutes"
         const val KEY_SCHEDULED_INTERVAL = "scheduled_interval_minutes"
         const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
         const val KEY_LOCK_ON_SIM_REMOVAL = "lock_on_sim_removal"

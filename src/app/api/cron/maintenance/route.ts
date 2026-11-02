@@ -6,11 +6,14 @@ import {
   auditLogs,
   commands,
   devicePhotos,
+  deviceReconnectCodes,
   emailCodes,
   emailLogs,
   emailTokens,
   geofenceEvents,
   locations,
+  mobileLinkCodes,
+  mobileSessions,
   pairingCodes,
   pendingMfa,
   rateLimits,
@@ -76,6 +79,30 @@ async function deleteExpired(): Promise<void> {
       .delete(pairingCodes)
       .where(
         or(lt(pairingCodes.expiresAt, now), lt(pairingCodes.usedAt, sessionCutoff)),
+      ),
+    db()
+      .delete(mobileLinkCodes)
+      .where(
+        or(
+          lt(mobileLinkCodes.expiresAt, now),
+          lt(mobileLinkCodes.usedAt, sessionCutoff),
+        ),
+      ),
+    db()
+      .delete(deviceReconnectCodes)
+      .where(
+        or(
+          lt(deviceReconnectCodes.expiresAt, now),
+          lt(deviceReconnectCodes.usedAt, sessionCutoff),
+        ),
+      ),
+    db()
+      .delete(mobileSessions)
+      .where(
+        or(
+          lt(mobileSessions.refreshExpiresAt, now),
+          lt(mobileSessions.revokedAt, sessionCutoff),
+        ),
       ),
     db().delete(rateLimits).where(lt(rateLimits.windowStart, rateCutoff)),
     db().delete(emailLogs).where(lt(emailLogs.createdAt, emailLogCutoff)),
