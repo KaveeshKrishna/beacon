@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "prebuild": "node scripts/copy-maplibre-worker.mjs && node scripts/migrate-on-vercel.mjs",
+    "prebuild": "node scripts/copy-maplibre-worker.mjs",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
