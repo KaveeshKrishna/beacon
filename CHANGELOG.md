@@ -8,7 +8,12 @@ Because Beacon handles location data and device control, security-relevant chang
 
 ## Unreleased
 
-Nothing yet. Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+### Fixed
+
+- A browser reconnect approval opened from a signed-out session now survives sign-in. The middleware records the real same-origin path in a server-only header, and the app layout forwards it as a validated `next` value, so the challenge, state, and install hash are not dropped at `/login`.
+- Middleware tests assert that the forwarded path cannot be spoofed by a client-supplied header and is not exposed on the response.
+
+Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
