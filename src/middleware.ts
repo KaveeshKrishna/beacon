@@ -43,6 +43,12 @@ export function middleware(request: NextRequest) {
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", value);
+  // Server layouts cannot read searchParams. Preserve the exact same-origin
+  // path so an in-progress approval survives a sign-in redirect.
+  requestHeaders.set(
+    "x-beacon-path",
+    `${request.nextUrl.pathname}${request.nextUrl.search}`,
+  );
   requestHeaders.set("Content-Security-Policy", csp);
 
   const response = NextResponse.next({
