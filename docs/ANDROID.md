@@ -34,6 +34,19 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 On Windows use `gradlew.bat`. The debug build has an `applicationId` suffix, so it can coexist with a release install. It is not covered by `FLAG_SECURE`, which makes screenshots possible during development.
 
+### Screenshot harness
+
+Debug builds include a fake-data screenshot entry point, `dev.beacon.app.ScreenshotActivity`. It renders the real screens without pairing a device or contacting a server, which keeps account data and coordinates out of captured images. It is compiled only into the debug variant. After installing the debug APK:
+
+```bash
+adb shell am start -n dev.beacon.app.debug/dev.beacon.app.ScreenshotActivity \
+  --es screen protection
+
+# screen values: home, protection, update, account, direction, geofence
+```
+
+Use the normal Android screenshot shortcut or `adb shell screencap -p /sdcard/shot.png`. The `home` and `protection` values render the same screen; scroll to the section you need. The `update` value shows the persistent check-result status and the update card. This harness is for development only; it does not run in release builds.
+
 ### Release
 
 A release build is minified with R8 and resource shrinking enabled. Signing is optional and read from `android/keystore.properties`:

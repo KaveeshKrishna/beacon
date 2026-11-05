@@ -539,8 +539,10 @@ private fun PairScreen(
     }
 }
 
+// Internal rather than private so the debug-only screenshot harness can render
+// the real screen. Release builds contain no harness and no behavior change.
 @Composable
-private fun HomeScreen(
+internal fun HomeScreen(
     state: BeaconState,
     pairing: PairingUiState,
     busyAction: String?,

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!--
+          Debug-only entry point for capturing UI screenshots with fake data.
+          It is never part of a release build and never talks to a server.
+        -->
+        <activity
+            android:name=".ScreenshotActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Beacon"
+            android:windowSoftInputMode="adjustResize" />
+
+    </application>
+
+</manifest>
