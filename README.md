@@ -8,7 +8,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 [![Next.js](https://img.shields.io/badge/Next.js-15.5-000)](https://nextjs.org)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)](https://developer.android.com)
 
-> **Status:** `v0.1.5` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
+> **Status:** `v0.1.6` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
 
 ---
 
@@ -153,7 +153,7 @@ scripts/               Brand asset generation
 | [docs/EMAIL.md](docs/EMAIL.md) | Relay and Resend setup, priority, failover, logs |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Monitoring, key rotation, incidents, retention |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | What Android and the free stack cannot do |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.5` |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.6` |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and security policy |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and review standards |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations and enforcement |

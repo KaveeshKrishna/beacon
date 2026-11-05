@@ -1,6 +1,6 @@
 {
   "name": "beacon",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Beacon — an Android-first, offline-resilient device locator.",
   "license": "AGPL-3.0-or-later",

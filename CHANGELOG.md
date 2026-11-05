@@ -8,12 +8,28 @@ Because Beacon handles location data and device control, security-relevant chang
 
 ## Unreleased
 
+Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+---
+
+## 0.1.6 — 2026-11-05
+
 ### Fixed
 
+- **Check for updates now shows its result where the button is.** The last outcome stays under the button — update available, already up to date, the server does not publish Android updates, or the error — instead of relying on a transient snackbar. A manual check that finds a build scrolls the update card into view and also announces it with a snackbar. Previously the offer was inserted above the fold with no immediate feedback, so checking from the bottom of the long home screen looked like it did nothing.
 - A browser reconnect approval opened from a signed-out session now survives sign-in. The middleware records the real same-origin path in a server-only header, and the app layout forwards it as a validated `next` value, so the challenge, state, and install hash are not dropped at `/login`.
 - Middleware tests assert that the forwarded path cannot be spoofed by a client-supplied header and is not exposed on the response.
 
-Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+### Changed
+
+- `versionCode` is 7 and `versionName` is `0.1.6`.
+- No database migration or new server environment variable is required for this release.
+
+### Verification
+
+- Android unit tests — 20 pass (`PkceTest`, `GeofenceMathTest`, `TrackingIntervalsTest`, `VersionComparisonTest`).
+- Release APK: versionCode 7, versionName 0.1.6, 24,943,099 bytes, SHA-256 `c5c9c8a01fd24d4326eb0845cd8a8742a68565c76f17e9c1c9a632b9e301af53`, signed with the existing Beacon certificate (`a2eb5d82…f53df4`). Release builds include `arm64-v8a` and `armeabi-v7a`.
+- `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build` — pass.
 
 ---
 

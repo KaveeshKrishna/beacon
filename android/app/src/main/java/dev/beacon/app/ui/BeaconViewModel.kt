@@ -68,6 +68,13 @@ data class UpdateUiState(
     val progress: Int = 0,
     val readyToInstall: Boolean = false,
     val error: String? = null,
+    // The result of the last manual check. Kept in state so it stays visible
+    // next to the button instead of disappearing with a transient snackbar.
+    val status: String? = null,
+    val statusIsError: Boolean = false,
+    // Changes only after a manual check that found an update, so the home
+    // screen can reveal the update card the owner just asked about.
+    val revealKey: Long = 0L,
 )
 
 data class GeofenceUiState(
@@ -935,13 +942,26 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
             if (manual) _feedback.value = Feedback("Pair this device first.", true)
             return
         }
-        _update.update { it.copy(checking = true, error = null) }
+        _update.update {
+            it.copy(
+                checking = true,
+                error = null,
+                status = null,
+                statusIsError = false,
+            )
+        }
         container.prefs.lastUpdateCheckAt = System.currentTimeMillis()
         viewModelScope.launch {
             try {
                 when (val result = checker.check(pairing.serverUrl)) {
                     UpdateCheck.Disabled -> {
-                        _update.value = UpdateUiState()
+                        _update.value = UpdateUiState(
+                            status = if (manual) {
+                                "This server does not publish Android updates."
+                            } else {
+                                null
+                            },
+                        )
                         if (manual) {
                             _feedback.value = Feedback(
                                 "This server does not publish Android updates.",
@@ -950,7 +970,13 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                     UpdateCheck.UpToDate -> {
-                        _update.value = UpdateUiState()
+                        _update.value = UpdateUiState(
+                            status = if (manual) {
+                                "Beacon is up to date (${BuildConfig.VERSION_NAME})."
+                            } else {
+                                null
+                            },
+                        )
                         if (manual) {
                             _feedback.value = Feedback(
                                 "Beacon is up to date (${BuildConfig.VERSION_NAME}).",
@@ -970,13 +996,25 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                                 info = result.info,
                                 readyToInstall = cached != null,
                                 progress = if (cached != null) 100 else 0,
+                                status = "Beacon ${result.info.versionName} is available.",
+                                revealKey = if (manual) System.nanoTime() else 0L,
                             )
+                            if (manual) {
+                                _feedback.value = Feedback(
+                                    "Beacon ${result.info.versionName} is available.",
+                                    false,
+                                )
+                            }
                         }
                     }
                 }
             } catch (error: Exception) {
                 val message = error.message ?: "The update check failed."
-                _update.value = UpdateUiState(error = if (manual) message else null)
+                _update.value = UpdateUiState(
+                    error = if (manual) message else null,
+                    status = if (manual) message else null,
+                    statusIsError = manual,
+                )
                 if (manual) _feedback.value = Feedback(message, true)
             }
         }
@@ -1035,8 +1073,14 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun dismissUpdate() {
-        _update.value.info?.let { container.prefs.ignoredUpdateVersion = it.versionName }
-        _update.value = UpdateUiState()
+        _update.value.info?.let { info ->
+            container.prefs.ignoredUpdateVersion = info.versionName
+            _update.value = UpdateUiState(
+                status = "Update to ${info.versionName} postponed.",
+            )
+        } ?: run {
+            _update.value = UpdateUiState()
+        }
     }
 
     private fun runSync(label: String, trigger: SyncTrigger) {

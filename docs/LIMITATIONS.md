@@ -2,7 +2,7 @@
 
 Beacon is honest about what a phone app can and cannot do. This page is the list of things that will not work, may work slowly, or require a decision before you rely on Beacon for a real emergency.
 
-**Read this before deploying.** `v0.1.5` has not had an independent security audit or a physical-device field trial.
+**Read this before deploying.** `v0.1.6` has not had an independent security audit or a physical-device field trial.
 
 ---
 
@@ -42,7 +42,7 @@ Android does not promise exact background schedules.
 
 ### No push on Android yet
 
-The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.5` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
+The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.6` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
 
 ---
 

@@ -157,7 +157,7 @@ pending ──claim──▶ delivered ──ack──▶ completed
    └──expiry──▶ expired ◀──expiry──┘
 ```
 
-- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.5 Android client does not register a token).
+- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.6 Android client does not register a token).
 - The device claims commands on every location upload, heartbeat, and polling cycle.
 - `claimPendingCommands` updates `pending → delivered` in the same transaction window as the read, so two concurrent claims cannot both return the same row in practice.
 - The Android handler returns an ack with `completed`, `failed`, `unsupported`, or `deferred`.

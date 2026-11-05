@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -594,10 +596,26 @@ private fun HomeScreen(
         else -> Positive
     }
 
+    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val updateCardRequester = remember { BringIntoViewRequester() }
+    // A manual check that finds an update now reveals the card instead of
+    // leaving the owner at the bottom of the screen wondering what happened.
+    LaunchedEffect(update.revealKey) {
+        if (update.revealKey != 0L && update.info != null) {
+            try {
+                updateCardRequester.bringIntoView()
+            } catch (_: IllegalStateException) {
+                // The card left composition before layout; the snackbar still
+                // reports the offer, so there is nothing else to do.
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 18.dp),
     ) {
         Spacer(Modifier.height(14.dp))
@@ -872,7 +890,9 @@ private fun HomeScreen(
             Spacer(Modifier.height(26.dp))
             SectionHeader("App update")
             Spacer(Modifier.height(9.dp))
-            BeaconCard {
+            BeaconCard(
+                modifier = Modifier.bringIntoViewRequester(updateCardRequester),
+            ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -1145,7 +1165,7 @@ private fun HomeScreen(
                     modifier = Modifier.padding(horizontal = 15.dp),
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f),
                 )
-                Box(modifier = Modifier.padding(15.dp)) {
+                Column(modifier = Modifier.padding(15.dp)) {
                     BeaconOutlinedButton(
                         text = "Check for updates",
                         onClick = onCheckForUpdates,
@@ -1153,6 +1173,40 @@ private fun HomeScreen(
                         loading = update.checking,
                         icon = Icons.Rounded.SystemUpdate,
                     )
+                    if (update.status != null) {
+                        Spacer(Modifier.height(9.dp))
+                        Text(
+                            update.status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (update.statusIsError) {
+                                Danger
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    if (update.info != null) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    try {
+                                        updateCardRequester.bringIntoView()
+                                    } catch (_: IllegalStateException) {
+                                        // Nothing to reveal if the card is gone.
+                                    }
+                                }
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = 0.dp,
+                                vertical = 0.dp,
+                            ),
+                        ) {
+                            Text(
+                                "View update",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
                 }
             }
         }
