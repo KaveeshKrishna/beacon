@@ -250,13 +250,13 @@ private fun fakeAccount(direction: Boolean): AccountUiState {
 
 private fun fakeUpdate(): UpdateUiState = UpdateUiState(
     info = UpdateInfo(
-        versionName = "0.1.7",
+        versionName = "0.1.7-example",
         apkUrl = "https://beacon.example.com/beacon.apk",
         sha256 = "c5c9c8a01fd24d4326eb0845cd8a8742a68565c76f17e9c1c9a632b9e301af53",
         sizeBytes = 24_943_099L,
         notes = "Visible update checks and the Protection layout fix.",
     ),
-    status = "Beacon 0.1.7 is available.",
+    status = "Beacon 0.1.7-example is available.",
     revealKey = 0L,
 )
 
