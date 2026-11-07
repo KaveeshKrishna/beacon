@@ -94,6 +94,27 @@ object NotificationHelper {
             .build()
     }
 
+    /**
+     * Refreshes the persistent tracking notification when the foreground
+     * service switches between lost mode, fence watching, and interval mode.
+     */
+    fun updateTracking(
+        context: Context,
+        lostMode: Boolean,
+        fenceWatch: Boolean,
+    ) {
+        val text = when {
+            lostMode -> context.getString(R.string.notification_lost_text)
+            fenceWatch -> context.getString(R.string.notification_fence_text)
+            else -> context.getString(R.string.notification_tracking_text)
+        }
+        notify(
+            context,
+            ID_TRACKING,
+            trackingNotification(context, lostMode = lostMode, text = text),
+        )
+    }
+
     fun showMessage(context: Context, message: String) {
         val notification = base(
             context,

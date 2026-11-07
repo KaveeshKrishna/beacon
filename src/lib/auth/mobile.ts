@@ -171,6 +171,17 @@ export async function authenticateMobile(
     throw new ApiError(401, "unauthorized", "Invalid mobile credentials.");
   }
 
+  // Lost mode is enforced here, not only by the Compose overlay. A phone
+  // marked lost must not read sibling devices or reach recovery actions, even
+  // if the person holding it still has valid mobile tokens.
+  if (row.device.status === "lost") {
+    throw new ApiError(
+      403,
+      "device_lost",
+      "This device is in lost mode. Account actions can only be used from the dashboard.",
+    );
+  }
+
   if (Date.now() - row.session.lastUsedAt.getTime() > 5 * 60_000) {
     await db()
       .update(mobileSessions)
@@ -199,7 +210,7 @@ export async function rotateMobileSession(
 
   const tokenHash = hashMobileRefreshToken(refreshToken);
   const rows = await db()
-    .select({ session: mobileSessions })
+    .select({ session: mobileSessions, device: devices })
     .from(mobileSessions)
     .innerJoin(users, eq(users.id, mobileSessions.userId))
     .innerJoin(devices, eq(devices.id, mobileSessions.deviceId))
@@ -214,7 +225,8 @@ export async function rotateMobileSession(
     )
     .limit(1);
 
-  const session = rows[0]?.session;
+  const row = rows[0];
+  const session = row?.session;
   if (!session || session.refreshExpiresAt.getTime() <= Date.now()) {
     // Reuse of a token that was already rotated away is a strong signal that
     // the refresh token was copied. Revoke the session family.
@@ -239,6 +251,16 @@ export async function rotateMobileSession(
       401,
       "invalid_refresh",
       "The mobile session has expired. Link this phone again.",
+    );
+  }
+
+  // A lost device keeps its refresh credential so it can be used again after
+  // recovery, but it cannot rotate into account access while lost mode is on.
+  if (row?.device.status === "lost") {
+    throw new ApiError(
+      403,
+      "device_lost",
+      "This device is in lost mode. Account actions can only be used from the dashboard.",
     );
   }
 

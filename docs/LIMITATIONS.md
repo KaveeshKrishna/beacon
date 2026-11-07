@@ -2,7 +2,7 @@
 
 Beacon is honest about what a phone app can and cannot do. This page is the list of things that will not work, may work slowly, or require a decision before you rely on Beacon for a real emergency.
 
-**Read this before deploying.** `v0.1.6` has not had an independent security audit or a physical-device field trial.
+**Read this before deploying.** `v0.1.7` has not had an independent security audit or a physical-device field trial.
 
 ---
 
@@ -17,6 +17,7 @@ These are not bugs and cannot be fixed by better code:
 | Safe mode | Third-party apps do not run. |
 | Location turned off | No fix. The app may still check in if data is available. |
 | Airplane mode | No data. SMS fallback may still work if a cellular network is available and `SEND_SMS` is granted. |
+| SIM removed and no Wi-Fi, hotspot, or replacement data path | No mobile data. GPS is receive-only: it tells the phone where it is but cannot upload a fix or receive a command. Live location and remote commands are impossible until any data path returns. Beacon queues fixes locally and uploads them when one does. |
 | Background camera / microphone | Blocked by Android. Photo capture requires a person to open the app and take the picture. |
 | Silent install of a system app | Not possible. Beacon is a normal user app. |
 | Silent self-update | Android shows its install confirmation for sideloaded APKs. Beacon verifies the checksum and signing key first, but cannot skip the prompt without Device Owner or Play. |
@@ -38,11 +39,13 @@ Android does not promise exact background schedules.
 - The lost-mode foreground service keeps a persistent notification. It cannot be hidden, and hiding it would violate Android policy.
 - The app does not request exact alarms or hold an indefinite wake lock.
 
-**Practical impact:** outside lost mode, a command can take 15–60 minutes to arrive. In the worst OEM case, it can take longer. Lost mode polls every two minutes while its service runs.
+**Practical impact:** outside lost mode, the 15-minute control worker is the usual ceiling for command latency, but Doze and aggressive OEMs can delay it. The in-app check-in card shows the tracking cadence, not the control poll. Lost mode polls every two minutes while its service runs, and the instant-fence watcher polls every five minutes.
+
+GPS is receive-only. It cannot carry commands or uploads, and no app-only Android design can deliver live tracking after the SIM is removed unless Wi-Fi, a hotspot, a replacement SIM, or another data path is available. Beacon does not pretend otherwise: it queues fixes in encrypted storage and flushes them when connectivity returns.
 
 ### No push on Android yet
 
-The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.6` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
+The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.7` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -76,9 +79,9 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - `Retry-After` from a provider is not honored; there is one fixed 300 ms retry per provider.
 - Offline alerts are evaluated by the maintenance route. On Vercel Hobby that is once a day unless an external scheduler calls it more often.
 - Alert state has cooldowns: offline 24 h, low battery 12 h, SIM change 6 h. A resolved-then-recurring condition may wait for the cooldown.
-- Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event. The app's automatic interval adaptation uses the fence geometry returned with the last sync and the fix just taken, so a crossing is noticed at the next check-in rather than instantly.
+- Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event. The default **Instant fence alerts** watcher compares a fix about every two minutes with cached geometry and uploads immediately on a transition, but Android can delay the service, an indoor fix may not move, and the server still needs the upload. With the watcher off or refused, a crossing is seen at the next check-in. The maintenance cron retries a failed geofence email, but only for 24 hours and only while the cron runs.
 - The map-based fence editor needs network access for OpenFreeMap tiles. Without tiles the map is blank, though the radius slider and presets still work. The app allows 50 m–5 km; the server accepts any radius in its own validation range.
-- The outside-fence check-in value is a device-local preference, not an account setting. It is not synced to the dashboard and must be set again after an app data wipe. It applies only in Automatic mode and only when at least one fence exists.
+- The inside- and outside-fence check-in values are device-local preferences, not account settings. They are not synced to the dashboard and must be set again after an app data wipe. They apply only in Automatic mode and only when at least one fence exists. A one- or two-minute override keeps the foreground service running and costs battery accordingly.
 
 ---
 
@@ -108,7 +111,8 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - A phone must be linked for seven continuous days before it can reset MFA. A new link deliberately cannot rescue a lost authenticator. If both the authenticator and the recovery codes are lost before the trust period, email OTP or the operator is the remaining path.
 - A biometric prompt is only a local gate. The server cannot verify that a human passed it; it verifies the mobile session and the account password.
 - The phone that performs the reset stays linked. All web sessions and all other linked phones are revoked, and a new factor must be enrolled.
-- A linked phone can see the name, model, presence, battery, and latest location of every active device on the account. It cannot read history, photos, commands, or settings.
+- A linked phone can see the name, model, presence, battery, and latest location of every active device on the account. It cannot read history, photos, commands, or settings. Once the server marks that phone lost, its mobile session is rejected and the app clears any sibling list it had loaded; only the dashboard can use the account link again.
+- Revoking app access signs the phone out on its next request. If it is offline, the local session and any already-loaded sibling data remain until it reconnects. Revoking a browser session works the same way: an open dashboard tab is redirected within about 30 seconds, while a closed tab is simply rejected by the server on its next request.
 - Unlinking clears the local token even if the server cannot be reached, but the server row may remain until it is revoked under **Settings → Security → Linked phones** or the refresh token expires.
 - If the account is deleted, the device link and both mobile tokens stop working on the next request.
 - A reinstall loses the mobile session. Reconnect restores it and restarts the seven-day recovery trust clock; pairing by code reuses the device row but leaves the phone unlinked. The owner must reconnect or link the phone again.

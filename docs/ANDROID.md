@@ -121,7 +121,9 @@ A unique periodic worker syncs on a profile-controlled cadence:
 
 WorkManager is inexact. Doze, App Standby, and OEM task killers can delay a run by hours. A failed attempt uses exponential backoff starting at 30 seconds. The worker captures one fix, uploads the queue, sends a heartbeat when due, and processes returned commands.
 
-A heartbeat is sent at most every 10 minutes and only when the location queue is empty. It carries battery level, charging state, network type, SIM state, app version, and Android version. This is what powers offline and low-battery alerts.
+A heartbeat is sent at most every 10 minutes, even when the queue still has points. It carries battery level, charging state, network type, SIM state, app version, and Android version. This is what powers offline and low-battery alerts.
+
+When no foreground service runs, a separate 15-minute control worker polls commands, sends a due heartbeat, and checks whether the mobile account link was revoked. It never requests a location fix, so it adds one small HTTPS request per period instead of competing with the check-in cadence.
 
 ### Lost mode: foreground service
 
@@ -139,7 +141,7 @@ The app does **not** request `SCHEDULE_EXACT_ALARM`, wake locks held indefinitel
 
 ### Check-in interval and geofences
 
-The app offers Automatic, or a fixed interval of 1, 2, 5, 15, 30, or 60 minutes. Fixed intervals are always obeyed exactly; anything under 15 minutes runs through the foreground service, and the rest through WorkManager.
+The app offers Automatic, or a fixed interval of 1, 2, 5, 10, 15, 30, 60, or 120 minutes. Fixed intervals are always obeyed exactly; anything under 15 minutes runs through the foreground service, and the rest through WorkManager.
 
 Automatic follows the dashboard profile and, when the server has geofences for this device, adapts to the phone's last fix:
 
@@ -149,11 +151,13 @@ Automatic follows the dashboard profile and, when the server has geofences for t
 | `balanced` | 60 min | 15 min |
 | `high` | 30 min | 15 min |
 
-The check-in card also exposes an **outside fences** value. Choose **Follow profile** or a fixed 5, 10, 15, 30, 60, or 120 minutes. The override is device-local, applies only in Automatic mode when at least one fence exists, and is used only while the phone is outside every fence. It never changes a fixed check-in interval. The card shows the actual inside and outside values currently in effect, so the schedule is visible rather than implied.
+The check-in card exposes separate **inside fences** and **outside fences** values. Each can **Follow profile** or use a device-local override of 1, 2, 5, 10, 15, 30, 60, or 120 minutes. The overrides apply only in Automatic mode when at least one fence exists, and each is used only in its own geofence state. They never change a fixed check-in interval. The card shows the actual inside and outside values currently in effect, so the schedule is visible rather than implied.
 
-Fences can be created from the dashboard or drawn in the app: **Geofences → Add**. The editor is a full-screen map. Tap the map to move the centre, drag the orange radius handle, or use the slider and presets (50 m–5 km). It creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry only decides the next check-in.
+Fences can be created from the dashboard or drawn in the app: **Geofences → Add**. The editor is a full-screen map. Tap the map to move the centre, drag the orange radius handle, or use the slider and presets (50 m–5 km). It creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry also decides the next check-in.
 
-Adaptation is evaluated when a check-in happens, using the fix that was just taken. A phone that leaves a fence is noticed at its next check-in, not at the moment it crosses the boundary. Instant exit detection would need Google Play services' `GeofencingClient` or an already-running foreground service, and Beacon deliberately avoids a Play services dependency.
+**Instant fence alerts** (on by default) keeps a foreground watcher running in Automatic mode when at least one fence exists. It requests a fix about every two minutes with a 50 m displacement filter, compares each fix with the cached geometry on the phone, and uploads immediately on a transition. The same service polls commands every five minutes. This is the app-only way to notice a crossing within minutes without Google Play services; the cost is a persistent notification. Turning it off, refusing the foreground service, or using a fixed interval returns to detection at the next scheduled check-in. New or changed fence geometry resets the baseline, so the first fix after a sync cannot create a false event.
+
+With the watcher off, adaptation is evaluated only when a check-in happens, using the fix just taken. Even with it on, Android can delay the service, an indoor fix may not move, and the server still evaluates the event against the uploaded fix. Fence alerts are faster, not guaranteed instant.
 
 ### Linked account, Find My, and recovery
 
@@ -161,6 +165,7 @@ An optional account link lets one phone see the other devices on the same Beacon
 
 - The device token keeps reporting this phone's location. It is never widened to account scope.
 - The account link adds a second, narrow mobile session with `devices:read account:recover`. It cannot issue commands or change settings.
+- While the device row is marked lost, the server rejects mobile authentication and refresh with `403 device_lost`. The phone cannot read sibling devices or use recovery. The app also clears any sibling list and direction data when lost mode turns on. Tracking continues through the separate device token.
 
 **Linking.** Tap **Account → Link this phone**. The app generates a PKCE verifier, its S256 challenge, and a random `state`, then opens the browser at `/app/link-device`. The owner signs in, checks the device name, and approves. The browser returns through `beacon://account-linked?code=...&state=...`. Before exchanging the code the app compares `state` in constant time; a callback with the wrong state is ignored, so a malicious app that guesses the custom scheme cannot attach its own code. The verifier never leaves the phone. The link code is single-use and expires after five minutes.
 
@@ -234,7 +239,7 @@ The last known location remains visible in the dashboard while it is inside the 
 
 ## 5. Commands
 
-Commands arrive in the response to a location sync or heartbeat, or from the lost-mode poll. They expire after 24 hours.
+Commands arrive in the response to a location sync or heartbeat, from the lost-mode two-minute poll, the fence watcher's five-minute poll, or the 15-minute control worker. They expire after 24 hours.
 
 | Command | Behavior | Acknowledged as |
 | --- | --- | --- |
@@ -289,6 +294,8 @@ This is a best-effort breadcrumb, not a control channel. Beacon never sends comm
 - The install fingerprint is a SHA-256 of `ANDROID_ID`, the app signing certificate, and the package name. It is sent only as an opaque hash and is bound to one device row.
 - Account links and reconnects use a PKCE S256 exchange plus an app-side constant-time `state` check. A reconnect code also verifies the install fingerprint before rotating the device token. The mobile access token lasts 15 minutes; the rotating refresh token lasts 30 days and is rejected if replayed.
 - Pairing or reconnecting rotates the device token and revokes the row's previous mobile sessions, so a copied link token cannot outlive the link the owner sees.
+- Lost mode is enforced server-side: mobile authentication and refresh, device geofence writes, and self-unpair return `403 device_lost`. Blocked attempts are audited. Location ingest, heartbeat, command acknowledgement, and photo upload remain available.
+- The dashboard checks session liveness every 30 seconds and when a tab regains focus, so a revoked browser session is redirected to sign-in promptly. One device's mobile sessions can be revoked from Device Settings without stopping its tracking.
 - Account recovery requires a link at least seven days old, `BIOMETRIC_STRONG`, and the account password. The server verifies the password and revokes all other sessions.
 - `FLAG_SECURE` on release builds prevents screenshots and screen recording of the app (opt-out in Settings).
 - Lock on SIM removal is opt-in and uses device-admin `lockNow()` only after a READY→ABSENT transition. It is a deterrent, not a wipe, and a thief can bypass it by never removing the SIM.
@@ -332,8 +339,8 @@ dev.beacon.app
 ├── location/                 Sampler, WorkManager scheduler
 ├── network/                  HttpURLConnection API client and DTOs
 ├── sync/                     Sync engine, command handler
-├── tracking/                 Lost-mode foreground service
-├── work/                     Worker and boot receiver
+├── tracking/                 Lost-mode and fence-watch foreground service
+├── work/                     Location worker, control worker, boot receiver
 ├── notifications/            Channels, alarm, photo and command notices
 ├── security/                 Device admin receiver and wrapper
 ├── sms/                      Rate-limited SMS fallback

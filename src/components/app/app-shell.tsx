@@ -1,5 +1,6 @@
 import { Wordmark } from "@/components/brand/logo";
 import { MobileHeader } from "@/components/app/mobile-header";
+import { SessionHeartbeat } from "@/components/app/session-heartbeat";
 import {
   SidebarNav,
   UserMenu,
@@ -18,6 +19,7 @@ export function AppShell({
 }) {
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
+      <SessionHeartbeat />
       <aside className="sticky top-0 hidden h-screen flex-col border-r border-line bg-surface lg:flex">
         <div className="flex h-[64px] shrink-0 items-center border-b border-line px-5">
           <Wordmark size="sm" />

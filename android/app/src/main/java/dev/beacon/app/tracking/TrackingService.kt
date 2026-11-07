@@ -13,6 +13,8 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import dev.beacon.app.BeaconApplication
+import dev.beacon.app.core.AppPreferences
+import dev.beacon.app.location.TrackingScheduler
 import dev.beacon.app.notifications.NotificationHelper
 import dev.beacon.app.sync.SyncTrigger
 import java.util.concurrent.atomic.AtomicLong
@@ -30,6 +32,7 @@ class TrackingService : Service() {
     private var locationManager: LocationManager? = null
     private var listener: LocationListener? = null
     private val lastSyncAttempt = AtomicLong(0L)
+    private var cadenceKey: String? = null
 
     private val app: BeaconApplication
         get() = application as BeaconApplication
@@ -56,22 +59,33 @@ class TrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val container = app.container
-        val interval = container.prefs.effectiveIntervalMinutes()
-        if (container.prefs.pairing() == null ||
-            container.prefs.authRevoked ||
-            (!container.prefs.lostMode &&
-                interval >= dev.beacon.app.location.TrackingScheduler.MIN_PERIODIC_MINUTES)
+        val prefs = app.container.prefs
+        val interval = prefs.effectiveIntervalMinutes()
+        val fenceWatch = TrackingScheduler.shouldWatchFences(prefs)
+        if (prefs.pairing() == null ||
+            prefs.authRevoked ||
+            (!prefs.lostMode && !fenceWatch && interval >= TrackingScheduler.MIN_PERIODIC_MINUTES)
         ) {
             stopSelf()
             return START_NOT_STICKY
         }
 
-        startLocationUpdates()
-        startPolling()
-        scope.launch {
-            container.syncEngine.run(SyncTrigger.COMMAND_POLL)
+        // A running service keeps its original listeners and loop delays. When
+        // the owner changes the interval, a fence crossing changes the
+        // effective cadence, or lost mode toggles, replace both loops.
+        val key = "${prefs.lostMode}|$interval|$fenceWatch"
+        if (key != cadenceKey || listener == null) {
+            cadenceKey = key
+            stopLocationUpdates()
+            pollJob?.cancel()
+            startLocationUpdates(prefs)
+            startPolling(prefs)
         }
+        NotificationHelper.updateTracking(
+            this,
+            lostMode = prefs.lostMode,
+            fenceWatch = fenceWatch,
+        )
         return START_STICKY
     }
 
@@ -84,21 +98,39 @@ class TrackingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun startLocationUpdates() {
+    private fun startLocationUpdates(prefs: AppPreferences) {
         if (listener != null) return
         val manager = getSystemService(LocationManager::class.java) ?: return
         locationManager = manager
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                val now = System.currentTimeMillis()
-                val gap = if (app.container.prefs.lostMode) {
-                    LIVE_GAP_MS
+                val point = app.container.sampler.fromLocation(location)
+                val fenceWatch = TrackingScheduler.shouldWatchFences(prefs)
+
+                // Compare the fresh fix with the cached fences even when it is
+                // not due for upload. That is what makes a crossing visible
+                // within roughly one fix interval instead of an hour.
+                val crossed = if (prefs.lostMode || fenceWatch) {
+                    prefs.observeGeofence(point.latitude, point.longitude)
                 } else {
-                    intervalMs()
+                    false
+                }
+
+                val now = System.currentTimeMillis()
+                val gap = when {
+                    prefs.lostMode -> LIVE_GAP_MS
+                    crossed -> 0L
+                    else -> intervalMs(prefs)
                 }
                 if (now - lastSyncAttempt.get() < gap) return
                 lastSyncAttempt.set(now)
-                val point = app.container.sampler.fromLocation(location)
+
+                if (crossed) {
+                    // The inside/outside interval just changed. Let the
+                    // scheduler recalculate whether to keep the service and
+                    // restart its loops with the new cadence.
+                    TrackingScheduler.scheduleFromPreferences(this@TrackingService, prefs)
+                }
                 scope.launch {
                     app.container.syncEngine.run(SyncTrigger.LIVE, point)
                 }
@@ -112,6 +144,15 @@ class TrackingService : Service() {
         }
         this.listener = listener
 
+        val lostMode = prefs.lostMode
+        val fenceWatch = TrackingScheduler.shouldWatchFences(prefs)
+        val requestInterval = when {
+            lostMode -> LOST_UPDATE_INTERVAL_MS
+            fenceWatch -> FENCE_UPDATE_INTERVAL_MS
+            else -> intervalMs(prefs)
+        }
+        val minDistance = if (fenceWatch && !lostMode) 50f else 20f
+
         val providers = listOf(
             LocationManager.GPS_PROVIDER,
             LocationManager.NETWORK_PROVIDER,
@@ -121,8 +162,8 @@ class TrackingService : Service() {
                 if (manager.isProviderEnabled(provider)) {
                     manager.requestLocationUpdates(
                         provider,
-                        UPDATE_INTERVAL_MS,
-                        20f,
+                        requestInterval,
+                        minDistance,
                         listener,
                         Looper.getMainLooper(),
                     )
@@ -149,22 +190,35 @@ class TrackingService : Service() {
         locationManager = null
     }
 
-    private fun startPolling() {
+    private fun startPolling(prefs: AppPreferences) {
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
             while (isActive) {
+                // COMMAND_POLL does not request a GPS fix. It flushes anything
+                // already queued, fetches commands and config, and sends a
+                // heartbeat when due.
                 app.container.syncEngine.run(SyncTrigger.COMMAND_POLL)
-                delay(intervalMs())
+                delay(pollIntervalMs(prefs))
             }
         }
     }
 
-    private fun intervalMs(): Long =
-        app.container.prefs.effectiveIntervalMinutes().coerceIn(1, 1440) * 60_000L
+    private fun intervalMs(prefs: AppPreferences): Long =
+        prefs.effectiveIntervalMinutes().coerceIn(1, 1440) * 60_000L
+
+    private fun pollIntervalMs(prefs: AppPreferences): Long = when {
+        prefs.lostMode -> LOST_POLL_INTERVAL_MS
+        TrackingScheduler.shouldWatchFences(prefs) -> FENCE_POLL_INTERVAL_MS
+        else -> intervalMs(prefs)
+    }.coerceAtLeast(MIN_POLL_INTERVAL_MS)
 
     companion object {
-        private const val UPDATE_INTERVAL_MS = 30_000L
+        private const val LOST_UPDATE_INTERVAL_MS = 30_000L
+        private const val FENCE_UPDATE_INTERVAL_MS = 2 * 60_000L
         private const val LIVE_GAP_MS = 30_000L
+        private const val LOST_POLL_INTERVAL_MS = 2 * 60_000L
+        private const val FENCE_POLL_INTERVAL_MS = 5 * 60_000L
+        private const val MIN_POLL_INTERVAL_MS = 60_000L
 
         fun start(context: Context) {
             val intent = Intent(context, TrackingService::class.java)

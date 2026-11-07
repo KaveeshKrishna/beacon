@@ -208,4 +208,4 @@ The health endpoint reports database reachability, not email credentials. A prov
 | `EMAIL_DEV_LOG` does not help | A provider is configured, or `NODE_ENV=production` | It only applies with zero configured providers outside production |
 | Duplicate emails | Two providers accepted after a timeout | Check `email_logs`; a timeout can occur after provider acceptance |
 
-The last case is inherent to retrying after a timeout: the provider may have accepted the message before the connection failed. There is no idempotency key shared across providers in `v0.1.6`.
+The last case is inherent to retrying after a timeout: the provider may have accepted the message before the connection failed. There is no idempotency key shared across providers in `v0.1.7`.

@@ -99,7 +99,11 @@ class SyncEngine(
             }
 
             val heartbeatDue = System.currentTimeMillis() - prefs.lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS
-            if (!retry && heartbeatDue && queue.count() == 0) {
+            // A non-empty queue is not a reason to skip the heartbeat. If the
+            // flush failed, `retry` already suppresses this request; if it
+            // succeeded but more than one batch remains, the heartbeat still
+            // supplies commands and config.
+            if (!retry && heartbeatDue) {
                 when (
                     val result = api.heartbeat(
                         serverUrl = pairing.serverUrl,
@@ -117,6 +121,44 @@ class SyncEngine(
                         config = result.value.config
                         sentSomething = true
                         prefs.lastHeartbeatAt = System.currentTimeMillis()
+                        prefs.lastError = null
+                    }
+                    is ApiResult.Failure -> {
+                        if (result.kind == FailureKind.UNAUTHORIZED) {
+                            handleRevoked()
+                            onStateChanged()
+                            return Outcome.Stopped
+                        }
+                        if (result.kind == FailureKind.NETWORK) networkFailure = true
+                        if (result.kind == FailureKind.NETWORK ||
+                            result.kind == FailureKind.RATE_LIMITED ||
+                            result.kind == FailureKind.HTTP
+                        ) {
+                            retry = true
+                        }
+                        prefs.lastError = result.message
+                    }
+                }
+            }
+
+            // A command poll must actually reach the server even when no
+            // location is due and no heartbeat is due. Without this the
+            // 2-minute lost-mode loop could run for ten minutes without a
+            // single request.
+            if (!retry &&
+                !sentSomething &&
+                trigger == SyncTrigger.COMMAND_POLL
+            ) {
+                when (
+                    val result = api.fetchCommands(
+                        serverUrl = pairing.serverUrl,
+                        token = pairing.token,
+                    )
+                ) {
+                    is ApiResult.Success -> {
+                        commands += result.value.commands
+                        config = result.value.config
+                        sentSomething = true
                         prefs.lastError = null
                     }
                     is ApiResult.Failure -> {
@@ -279,7 +321,8 @@ class SyncEngine(
 
         if (intervalBefore != prefs.effectiveIntervalMinutes() ||
             profileChanged ||
-            lostModeChanged
+            lostModeChanged ||
+            fencesChanged
         ) {
             TrackingScheduler.scheduleFromPreferences(context, prefs)
         }

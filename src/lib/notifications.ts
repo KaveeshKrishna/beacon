@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -138,6 +138,97 @@ export async function evaluateGeofences(input: {
       // The event remains in the log with notified_at = null for inspection.
     }
   }
+}
+
+/**
+ * Retry geofence emails that were never marked notified. The original path is
+ * best-effort because it runs after location ingestion; a transient email
+ * failure should not lose the alert. The update claims each row first so two
+ * overlapping cron runs cannot send the same event twice.
+ */
+export async function retryGeofenceNotifications(): Promise<number> {
+  const cutoff = new Date(Date.now() - 24 * 3_600_000);
+  const rows = await db()
+    .select({
+      event: geofenceEvents,
+      geofence: geofences,
+      device: devices,
+      user: users,
+      location: locations,
+    })
+    .from(geofenceEvents)
+    .innerJoin(geofences, eq(geofences.id, geofenceEvents.geofenceId))
+    .innerJoin(devices, eq(devices.id, geofenceEvents.deviceId))
+    .innerJoin(users, eq(users.id, devices.userId))
+    .leftJoin(locations, eq(locations.id, geofenceEvents.locationId))
+    .where(
+      and(
+        isNull(geofenceEvents.notifiedAt),
+        gt(geofenceEvents.occurredAt, cutoff),
+        isNull(devices.revokedAt),
+        isNull(users.deletedAt),
+        eq(users.notifyGeofence, true),
+        or(
+          and(
+            eq(geofenceEvents.type, "enter"),
+            eq(geofences.notifyOnEnter, true),
+          ),
+          and(
+            eq(geofenceEvents.type, "exit"),
+            eq(geofences.notifyOnExit, true),
+          ),
+        ),
+      ),
+    )
+    .orderBy(asc(geofenceEvents.occurredAt))
+    .limit(50);
+
+  let sent = 0;
+  for (const { event, geofence, device, user, location } of rows) {
+    const claimed = await db()
+      .update(geofenceEvents)
+      .set({ notifiedAt: new Date() })
+      .where(
+        and(
+          eq(geofenceEvents.id, event.id),
+          isNull(geofenceEvents.notifiedAt),
+        ),
+      )
+      .returning({ id: geofenceEvents.id });
+    if (claimed.length === 0) continue;
+
+    try {
+      await sendTransactionalEmail({
+        to: user.email,
+        userId: user.id,
+        priority: user.emailProviderPriority,
+        payload: {
+          template: "geofence",
+          data: {
+            name: user.name,
+            deviceName: device.name,
+            geofenceName: geofence.name,
+            event: event.type === "enter" ? "entered" : "left",
+            when: formatDateTime(event.occurredAt, user.timezone),
+            url: dashboardUrl(event.deviceId),
+            mapsUrl: googleMapsUrl(
+              location?.latitude ?? geofence.centerLat,
+              location?.longitude ?? geofence.centerLon,
+            ),
+          },
+        },
+      });
+      sent += 1;
+    } catch {
+      // Release the claim so the next maintenance run can try again.
+      await db()
+        .update(geofenceEvents)
+        .set({ notifiedAt: null })
+        .where(eq(geofenceEvents.id, event.id));
+    }
+  }
+
+  return sent;
 }
 
 function isInside(

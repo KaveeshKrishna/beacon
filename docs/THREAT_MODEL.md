@@ -2,7 +2,7 @@
 
 This document describes what Beacon protects, who it protects against, and where the limits are. It is written for self-hosters and contributors, not as a marketing page. If a control is not implemented, it is listed under residual risk rather than implied.
 
-**Last reviewed:** November 2026, for `v0.1.6`.
+**Last reviewed:** November 2026, for `v0.1.7`.
 
 ---
 
@@ -75,7 +75,7 @@ A self-hosted instance is controlled by whoever runs it. Users must trust that o
 
 Someone uses Beacon to track another person without consent.
 
-**Mitigations:** pairing requires an authenticated account and a visible app on the target device; lost mode displays a full-screen notice; photo capture is foreground and user-mediated; the app never hides its icon or notification; Android requires explicit permissions.
+**Mitigations:** pairing requires an authenticated account and a visible app on the target device; lost mode displays a full-screen notice; photo capture is foreground and user-mediated; the app never hides its icon or notification; Android requires explicit permissions. Once the owner marks the device lost, the server also rejects its mobile session, fence changes, and self-unpair, so the person holding it cannot turn the account link against other devices.
 
 **Residual:** Beacon cannot verify consent. It is not a covert surveillance tool, and the project does not support using it as one. Hosters are responsible for applicable law.
 
@@ -83,7 +83,7 @@ Someone uses Beacon to track another person without consent.
 
 Has an unlocked phone with an approved account link, reinstalls the app to claim an existing device row, or registers a competing `beacon://` handler to intercept the link or reconnect callback.
 
-**Mitigations:** The mobile token is narrow (`devices:read account:recover`), access lives 15 minutes, refresh rotates and revokes on replay, and the app compares the callback `state` before exchanging a code. PKCE keeps the verifier on the phone, so an intercepted link or reconnect code cannot be exchanged. A reconnect also requires a signed-in browser approval and a matching install fingerprint; a row already bound to another fingerprint is never overwritten. Pairing or reconnecting rotates the device token and revokes the row's previous mobile sessions. MFA reset additionally requires `BIOMETRIC_STRONG`, the account password, a link at least seven days old, and explicit confirmation; it revokes every other session and emails the owner.
+**Mitigations:** The mobile token is narrow (`devices:read account:recover`), access lives 15 minutes, refresh rotates and revokes on replay, and the app compares the callback `state` before exchanging a code. If the device is marked lost, every mobile route and refresh returns `403 device_lost`, and the app clears any sibling list it had loaded. PKCE keeps the verifier on the phone, so an intercepted link or reconnect code cannot be exchanged. A reconnect also requires a signed-in browser approval and a matching install fingerprint; a row already bound to another fingerprint is never overwritten. Pairing or reconnecting rotates the device token and revokes the row's previous mobile sessions. MFA reset additionally requires `BIOMETRIC_STRONG`, the account password, a link at least seven days old, and explicit confirmation; it revokes every other session and emails the owner.
 
 **Residual:** An unlocked, already-linked phone with the password can reset MFA. A malicious app can still race the custom-scheme callback, but cannot complete the exchange without the verifier. A reinstall on the same phone with the same signing key and `ANDROID_ID` can reclaim the row after browser approval; that is the intended recovery path. Verified App Links are the documented upgrade path.
 
@@ -132,6 +132,8 @@ Has an unlocked phone with an approved account link, reinstalls the app to claim
 | Reinstall claims another phone's row | A row that already carries a different fingerprint is never overwritten; the owner sees the device name in the browser and must confirm the match |
 | Reusing a copied mobile token after reinstall | Pair and reconnect rotate the device token and revoke the row's previous mobile sessions |
 | Linked phone used to reset MFA | Requires a link older than seven days, `BIOMETRIC_STRONG`, the account password, and `confirm: "RESET"`; rate-limited and audited |
+| Lost phone reads sibling locations or uses recovery | Mobile authentication and refresh return `403 device_lost`; every mobile route rechecks the bound device row, and the app clears locally cached sibling data when lost mode turns on |
+| Revoked dashboard session keeps rendering | Every dashboard API request revalidates the server session; the client heartbeat checks every 30 seconds and on focus, then redirects to sign-in with `reason=session-ended` |
 
 ### Tampering
 
@@ -163,7 +165,7 @@ Has an unlocked phone with an approved account link, reinstalls the app to claim
 | Browser caching of private pages | Authenticated routes are dynamic; sensitive API responses use `no-store`; `X-Robots-Tag` on photos |
 | Screenshots of the app | `FLAG_SECURE` on release builds (not debug); screenshots are an explicit per-device opt-in |
 | Backup extraction | `allowBackup=false`, data extraction rules exclude app data, Keystore-encrypted token |
-| Linked phone sees sibling devices | The mobile token is read-only, returns only name/model/presence/battery and the latest fix, excludes history and photos, and can be revoked from **Settings → Security → Linked phones** |
+| Linked phone sees sibling devices | The mobile token is read-only, returns only name/model/presence/battery and the latest fix, excludes history and photos, and can be revoked from **Settings → Security → Linked phones** or per device under **Device Settings → Danger zone → Revoke app access** |
 
 ### Denial of service
 
@@ -189,12 +191,13 @@ Has an unlocked phone with an approved account link, reinstalls the app to claim
 | Mobile token used to command a device | Mobile routes expose only read-only device summaries/locations and the MFA reset; they do not import command or settings handlers |
 | MFA reset from a pairing token | Recovery uses a separate mobile session with `account:recover`, created only through browser approval; pairing codes cannot mint it |
 | Recovery abuse from a fresh link | The server rejects links younger than seven days with `recovery_not_ready` and limits attempts per session and account |
+| Lost device changes fences or unpairs itself | Device geofence `POST`/`DELETE` and self-unpair return `403 device_lost`; the attempt is audited as `device.lost_blocked`, and only the dashboard can change state |
 
 ---
 
 ## 5. Residual risks
 
-These are known and accepted for `v0.1.6`:
+These are known and accepted for `v0.1.7`:
 
 1. **No certificate pinning.** Self-hosting and certificate rotation make pinning a poor default. A compromised system CA, or a rooted device with a modified trust store, can intercept traffic. User-installed CAs are not trusted.
 2. **No hardware-backed attestation.** The server cannot prove the app binary is unmodified. Rooted clients can forge locations.
@@ -216,6 +219,8 @@ These are known and accepted for `v0.1.6`:
 18. **Compass direction is approximate.** The arrow mixes two location fixes with a magnetometer heading. Metal, magnets, vehicle dashboards, and indoor spaces distort the compass; the distance is straight-line, not a route.
 19. **Reinstall recovery depends on a stable install fingerprint.** `ANDROID_ID` changes after a factory reset (and can differ on some OEM builds), and a different signing key changes the hash. In those cases the browser can still confirm a legacy or unbound row, but a row already bound to another hash is protected and must be replaced. A reinstall also resets the seven-day recovery trust clock because the mobile session is new.
 20. **Reconnect uses a custom scheme.** Another app can register `beacon://reconnected` and receive the code. PKCE, the install-hash check, and the app-side `state` comparison prevent exchange, but the legitimate app may miss the callback. Reconnect codes expire after 10 minutes and pending app state after 15 minutes.
+21. **Fence alerts are faster, not instant.** The opt-out watcher needs a visible foreground service and a usable fix. Doze, OEM task killers, indoor GPS, and the upload itself can each add time. With the watcher off or refused, detection returns to the check-in interval.
+22. **Revocation waits for the next request.** A revoked browser or mobile session keeps whatever it has already loaded until it reaches the server. The dashboard heartbeat narrows this to about 30 seconds only while a tab is open; a closed tab is rejected on its next request.
 
 ---
 

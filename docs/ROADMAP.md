@@ -2,7 +2,7 @@
 
 This roadmap is ordered by risk and user value, not by novelty. Dates are deliberately omitted; a self-hosted security project should not ship a feature to hit a calendar.
 
-`v0.1.6` is a complete vertical slice. The next releases focus on proving it, closing platform gaps, and only then broadening the client surface.
+`v0.1.7` is a complete vertical slice. It adds independent fence intervals, opt-out instant fence alerts, server-enforced lost mode, per-device app-access revocation, and a 15-minute command poll. The next releases focus on proving it, closing platform gaps, and only then broadening the client surface.
 
 ---
 

@@ -25,7 +25,10 @@ import {
   errorResponse,
   ok,
 } from "@/lib/api";
-import { sendOfflineAlerts } from "@/lib/notifications";
+import {
+  retryGeofenceNotifications,
+  sendOfflineAlerts,
+} from "@/lib/notifications";
 import { safeEqual } from "@/lib/crypto";
 import { getEnv } from "@/lib/env";
 
@@ -134,11 +137,13 @@ export async function GET(request: NextRequest) {
     assertMethod(request, ["GET"]);
     authorize(request);
     await deleteExpired();
+    const geofenceRetries = await retryGeofenceNotifications();
     const alertsSent = await sendOfflineAlerts();
 
     return ok({
       ranAt: new Date().toISOString(),
       alertsSent,
+      geofenceRetries,
     });
   } catch (error) {
     return errorResponse(error);

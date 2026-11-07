@@ -6,9 +6,50 @@ Because Beacon handles location data and device control, security-relevant chang
 
 ---
 
-## Unreleased
+## 0.1.7 — 2026-11-07
 
-Planned work is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+### Added
+
+- **Instant fence alerts.** Automatic mode with at least one fence can run a lightweight foreground watcher. It requests a coarse fix about every two minutes, compares it with the cached fence geometry, and uploads immediately when the inside/outside state changes. It is opt-out because it keeps a persistent notification visible.
+- **Independent inside and outside intervals.** Automatic mode now exposes both values. Each can follow the dashboard profile or override it with 1, 2, 5, 10, 15, 30, 60, or 120 minutes. Fixed intervals remain available at 1, 2, 5, 10, 15, 30, 60, and 120 minutes and are still obeyed exactly.
+- **Per-device app-access revocation.** Device Settings → Danger zone → Revoke app access signs the phone out of Find My and recovery on its next request without unpairing it or stopping tracking.
+- **Immediate browser-session logout.** The dashboard checks session liveness every 30 seconds and when the tab regains focus. A session revoked from another browser redirects to sign-in with an explanation instead of looking active.
+- **Read-only lost-mode status screen.** The phone shows state, last contact, queue, permissions, profile, and server host without exposing settings, account, unpair, or sibling-device controls.
+- **15-minute control worker.** When no foreground service runs, a separate worker polls commands, sends the heartbeat, and checks the mobile link without requesting a location fix.
+
+### Changed
+
+- **A local fence crossing now triggers an immediate upload.** The tracking service compares each fresh fix with the cached fences, so an enter/exit email no longer waits for the next scheduled check-in. New or changed geometry resets the baseline so the first fix cannot create a false crossing.
+- Heartbeats are no longer skipped just because the location queue is non-empty. A command poll makes a request even when no location and no heartbeat are due.
+- Lost mode is enforced by the server, not only by the Compose overlay: mobile authentication and refresh, device geofence writes, and self-unpair return `403 device_lost`. Location ingest, heartbeat, command acknowledgement, and photo upload remain available so tracking and recovery still work.
+- The maintenance cron retries geofence emails that were never delivered (last 24 hours, at most 50 per run) and reports `geofenceRetries`.
+- The completed `v0.1.6` implementation plan was replaced by the `v0.1.7` plan and removed with this release.
+
+### Fixed
+
+- Geofence enter/exit emails could be delayed by a full check-in interval, or lost when the notification call failed after ingest.
+- Lost mode could be bypassed from the device to reach the full home screen, sibling devices, settings, or unpair.
+- The command poll could run for ten minutes without a request when neither a location flush nor a heartbeat was due.
+- The automatic interval card exposed only the outside value; the inside value was fixed by profile.
+- Fixed-interval and outside-fence dialogs omitted the supported 1 and 2 minute options.
+
+### Security
+
+- Revoking a browser session now signs that tab out within about 30 seconds instead of waiting for navigation.
+- A lost device cannot use its mobile account link to read sibling locations or reset MFA, and cannot change fences or unpair itself. Blocked attempts are audited as `device.lost_blocked`.
+- `DELETE /api/devices/:id/app-access` is owner-scoped, same-origin, and CSRF-protected like the other dashboard mutations.
+- No new server environment variable is required.
+
+### Migration
+
+- No database migration is required. `v0.1.7` uses existing tables and columns.
+
+### Verification
+
+- Android unit tests — 23 pass (`PkceTest` 4, `GeofenceMathTest` 7, `TrackingIntervalsTest` 8, `VersionComparisonTest` 4).
+- `npm run typecheck`, `npm run lint`, `npm test` (57 tests), and `npm run build` — pass.
+- Android `assembleDebug`, `assembleRelease`, and `lintRelease` — pass.
+- Release APK: versionCode 8, versionName 0.1.7, 24,943,207 bytes, SHA-256 `a639d62fbbca5ed89e6991ccd513a928725140f3af4e469bb5f134225220f74e`, signed with the existing Beacon certificate (`a2eb5d82…f53df4`). Release builds include `arm64-v8a` and `armeabi-v7a`.
 
 ---
 

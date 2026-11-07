@@ -15,6 +15,7 @@
     <string name="notification_tracking_text">Sharing location with your Beacon account.</string>
     <string name="notification_lost_title">Lost mode is active</string>
     <string name="notification_lost_text">This device is being tracked by its owner.</string>
+    <string name="notification_fence_text">Watching saved places for instant fence alerts.</string>
     <string name="notification_action_stop">Stop</string>
     <string name="notification_action_open">Open</string>
     <string name="notification_action_silence">Silence alarm</string>

@@ -127,7 +127,7 @@ install fingerprint never leaves the phone except as the opaque hash. A
 pairing code issued from the dashboard also reuses the row when the install
 hash matches, but only reconnect restores the account link.
 
-The token is scoped to one device row. There is no account password on the phone, so a compromised device cannot list other devices or change account settings. Revocation is a single column update; the next API request returns `401` and the app wipes its local queue.
+The token is scoped to one device row. There is no account password on the phone, so a compromised device cannot list other devices or change account settings. Revocation is a single column update; the next API request returns `401` and the app wipes its local queue. The owner can also revoke one device's separate mobile (Find My and recovery) sessions without stopping its tracking, and revoke an individual browser session; each is checked on the next request.
 
 ### Location ingest
 
@@ -147,6 +147,8 @@ Android SyncEngine
 
 `client_point_id` is generated on the phone. Retries after a timeout therefore insert nothing new: the count comes back as `duplicates` and the client still deletes the batch. The queue deletes rows only after a successful HTTP response, so a crash between upload and delete is safe.
 
+Geofence evaluation is server-side on ingest, but the phone keeps an encrypted cache of fence geometry. In Automatic mode with the default **Instant fence alerts**, a foreground watcher compares about every two-minute fix with that cache and uploads on a transition, so the server sees the event without waiting for the next scheduled check-in. If the watcher is off or Android refuses the service, the transition is noticed at the next check-in. The watcher is opt-out because it requires a persistent notification.
+
 ### Command lifecycle
 
 ```
@@ -157,8 +159,8 @@ pending ──claim──▶ delivered ──ack──▶ completed
    └──expiry──▶ expired ◀──expiry──┘
 ```
 
-- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.6 Android client does not register a token).
-- The device claims commands on every location upload, heartbeat, and polling cycle.
+- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.7 Android client does not register a token).
+- The device claims commands on every location upload, heartbeat, and polling cycle. Lost mode polls every two minutes, the instant-fence watcher every five minutes, and a control worker every 15 minutes when no foreground service runs.
 - `claimPendingCommands` updates `pending → delivered` in the same transaction window as the read, so two concurrent claims cannot both return the same row in practice.
 - The Android handler returns an ack with `completed`, `failed`, `unsupported`, or `deferred`.
 - Lost-mode status changes immediately in the dashboard; execution is still confirmed by the device. The UI says so explicitly.
@@ -302,7 +304,7 @@ Key design choices:
 - **No DI framework.** `AppContainer` is constructed once in `Application`; workers and services reach it through the application cast. This keeps startup predictable and avoids reflection in release builds.
 - **No Room.** The offline queue is one table with a hand-written `SQLiteOpenHelper`. The payload is already encrypted JSON; an ORM would add code without adding safety.
 - **No Retrofit.** A handful of endpoints and one JSON envelope do not justify the dependency. Timeouts, redirect rejection, and response-size limits are explicit.
-- **Foreground service only in lost mode.** A permanent tracking notification is a battery and privacy cost that most users do not need. WorkManager handles the baseline.
+- **Foreground service only in lost mode or the opt-out fence watcher.** A permanent tracking notification is a battery and privacy cost that most users do not need. WorkManager handles the baseline, and a 15-minute control worker covers command latency when no service runs.
 - **State is a snapshot.** `BeaconState` is rebuilt from preferences and the queue count; there is no long-lived in-memory state to drift after process death.
 
 ---

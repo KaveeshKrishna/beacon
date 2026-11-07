@@ -16,9 +16,14 @@ object TrackingIntervals {
         else -> 30
     }
 
-    fun automaticInside(profile: String): Int = when (profile) {
-        "high" -> 30
-        else -> 60
+    fun automaticInside(profile: String, overrideMinutes: Int = FOLLOW_PROFILE): Int {
+        if (overrideMinutes in MIN_OVERRIDE_MINUTES..MAX_OVERRIDE_MINUTES) {
+            return overrideMinutes
+        }
+        return when (profile) {
+            "high" -> 30
+            else -> 60
+        }
     }
 
     fun automaticOutside(profile: String, overrideMinutes: Int): Int {
@@ -39,6 +44,8 @@ object TrackingIntervals {
      * @param inside whether the last fix is inside one of those fences.
      * @param outsideOverride 0 to follow the profile, otherwise the interval to
      * use only while outside all fences.
+     * @param insideOverride 0 to follow the profile, otherwise the interval to
+     * use only while inside a fence.
      */
     fun effective(
         chosenMinutes: Int,
@@ -46,11 +53,12 @@ object TrackingIntervals {
         hasFences: Boolean,
         inside: Boolean,
         outsideOverride: Int,
+        insideOverride: Int = FOLLOW_PROFILE,
     ): Int {
         if (chosenMinutes > 0) return chosenMinutes
         if (!hasFences) return automaticBase(profile)
         return if (inside) {
-            automaticInside(profile)
+            automaticInside(profile, insideOverride)
         } else {
             automaticOutside(profile, outsideOverride)
         }

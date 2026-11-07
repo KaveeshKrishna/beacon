@@ -34,6 +34,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -147,6 +148,24 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
         syncAccountState()
         cleanupExpiredPhoto()
         autoCheckForUpdates()
+        viewModelScope.launch {
+            container.state.collect { snapshot ->
+                if (snapshot.lostMode) {
+                    // Lost mode must not leave sibling locations or a direction
+                    // line visible from this device. The server also rejects
+                    // account reads, but clearing locally avoids stale data.
+                    _account.update { account ->
+                        account.copy(
+                            devices = emptyList(),
+                            directionDeviceId = null,
+                            originLatitude = null,
+                            originLongitude = null,
+                            originAccuracyM = null,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun refresh() {
@@ -769,6 +788,43 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
                 "Outside fences now follows the dashboard profile."
             } else {
                 "Outside fences will check in every $minutes minute${if (minutes == 1) "" else "s"}."
+            },
+            false,
+        )
+    }
+
+    /**
+     * The interval used only while the phone is inside a fence. It has no
+     * effect on a fixed check-in interval or when no fences exist.
+     */
+    fun setInsideGeofenceInterval(minutes: Int) {
+        val value = minutes.coerceIn(
+            TrackingIntervals.MIN_OVERRIDE_MINUTES,
+            TrackingIntervals.MAX_OVERRIDE_MINUTES,
+        )
+        container.prefs.insideGeofenceMinutes =
+            if (minutes <= TrackingIntervals.FOLLOW_PROFILE) 0 else value
+        TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+        container.refresh()
+        _feedback.value = Feedback(
+            if (minutes <= TrackingIntervals.FOLLOW_PROFILE) {
+                "Inside fences now follows the dashboard profile."
+            } else {
+                "Inside fences will check in every $minutes minute${if (minutes == 1) "" else "s"}."
+            },
+            false,
+        )
+    }
+
+    fun setInstantFenceAlerts(enabled: Boolean) {
+        container.prefs.instantFenceAlerts = enabled
+        TrackingScheduler.scheduleFromPreferences(app, container.prefs)
+        container.refresh()
+        _feedback.value = Feedback(
+            if (enabled) {
+                "Instant fence alerts are on. A short foreground check runs while fences are configured."
+            } else {
+                "Instant fence alerts are off. Fence changes are seen at the next check-in."
             },
             false,
         )

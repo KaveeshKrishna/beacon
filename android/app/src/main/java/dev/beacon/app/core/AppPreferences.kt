@@ -290,6 +290,27 @@ class AppPreferences(context: Context) {
             putInt(KEY_OUTSIDE_INTERVAL, value.coerceIn(0, 1440))
         }
 
+    /**
+     * The interval used while the phone is inside a fence. 0 follows the
+     * dashboard profile. Kept separate from the outside override so an owner
+     * can make inside slow and outside fast, or the reverse.
+     */
+    var insideGeofenceMinutes: Int
+        get() = prefs.getInt(KEY_INSIDE_INTERVAL, 0).coerceIn(0, 1440)
+        set(value) = prefs.edit {
+            putInt(KEY_INSIDE_INTERVAL, value.coerceIn(0, 1440))
+        }
+
+    /**
+     * Opt-out foreground watcher for Automatic mode with fences. It requests a
+     * coarse fix roughly every two minutes, compares it with the cached fence
+     * geometry, and syncs immediately when the inside/outside state changes.
+     * The cost is a visible foreground-service notification.
+     */
+    var instantFenceAlerts: Boolean
+        get() = prefs.getBoolean(KEY_INSTANT_FENCE_ALERTS, true)
+        set(value) = prefs.edit { putBoolean(KEY_INSTANT_FENCE_ALERTS, value) }
+
     fun effectiveIntervalMinutes(): Int {
         val inside = insideGeofenceId?.let { id ->
             geofences.any { it.id == id }
@@ -300,11 +321,12 @@ class AppPreferences(context: Context) {
             hasFences = geofences.isNotEmpty(),
             inside = inside,
             outsideOverride = outsideGeofenceMinutes,
+            insideOverride = insideGeofenceMinutes,
         )
     }
 
     fun automaticInsideMinutes(): Int =
-        TrackingIntervals.automaticInside(trackingProfile)
+        TrackingIntervals.automaticInside(trackingProfile, insideGeofenceMinutes)
 
     fun automaticOutsideMinutes(): Int =
         TrackingIntervals.automaticOutside(trackingProfile, outsideGeofenceMinutes)
@@ -337,21 +359,31 @@ class AppPreferences(context: Context) {
             }
         }
         set(value) {
+            val next = value.take(20).map { fence ->
+                fence.copy(
+                    name = fence.name.take(60),
+                    radiusM = fence.radiusM.coerceIn(50, 50_000),
+                )
+            }
+            val changed = next != geofences
             val array = org.json.JSONArray()
-            value.take(20).forEach { fence ->
+            next.forEach { fence ->
                 array.put(
                     org.json.JSONObject()
                         .put("id", fence.id)
-                        .put("name", fence.name.take(60))
+                        .put("name", fence.name)
                         .put("lat", fence.centerLat)
                         .put("lon", fence.centerLon)
-                        .put("radius", fence.radiusM.coerceIn(50, 50_000)),
+                        .put("radius", fence.radiusM),
                 )
             }
             prefs.edit { putString(KEY_GEOFENCES, array.toString()) }
-            if (insideGeofenceId != null && value.none { it.id == insideGeofenceId }) {
+            if (insideGeofenceId != null && next.none { it.id == insideGeofenceId }) {
                 insideGeofenceId = null
             }
+            // New or altered geometry needs a fresh baseline. Otherwise the
+            // first fix after a list refresh could look like a crossing.
+            if (changed) geofenceStateKnown = false
         }
 
     var insideGeofenceId: String?
@@ -365,15 +397,38 @@ class AppPreferences(context: Context) {
             geofences.firstOrNull { it.id == id }?.name
         }
 
+    /**
+     * Whether a fix has established an inside/outside baseline. Without one,
+     * the first fix after a fence change must not raise a false transition.
+     */
+    var geofenceStateKnown: Boolean
+        get() = prefs.getBoolean(KEY_GEOFENCE_STATE_KNOWN, false)
+        private set(value) = prefs.edit { putBoolean(KEY_GEOFENCE_STATE_KNOWN, value) }
+
     /** Re-evaluates the cached fences against a fresh fix. */
     fun updateGeofenceState(latitude: Double, longitude: Double) {
         insideGeofenceId = GeofenceMath
             .containing(geofences, latitude, longitude)
             ?.id
+        geofenceStateKnown = true
+    }
+
+    /**
+     * Updates the cached fence state and reports whether this fix crossed a
+     * boundary. The first observation only establishes a baseline.
+     */
+    fun observeGeofence(latitude: Double, longitude: Double): Boolean {
+        val nextId = GeofenceMath.containing(geofences, latitude, longitude)?.id
+        val hadBaseline = geofenceStateKnown
+        val previousId = insideGeofenceId
+        insideGeofenceId = nextId
+        geofenceStateKnown = true
+        return hadBaseline && previousId != nextId
     }
 
     fun clearGeofenceState() {
         insideGeofenceId = null
+        geofenceStateKnown = false
     }
 
     /**
@@ -511,6 +566,9 @@ class AppPreferences(context: Context) {
         const val KEY_TRACKING_PROFILE = "tracking_profile"
         const val KEY_SYNC_INTERVAL = "sync_interval_minutes"
         const val KEY_OUTSIDE_INTERVAL = "outside_geofence_minutes"
+        const val KEY_INSIDE_INTERVAL = "inside_geofence_minutes"
+        const val KEY_INSTANT_FENCE_ALERTS = "instant_fence_alerts"
+        const val KEY_GEOFENCE_STATE_KNOWN = "geofence_state_known"
         const val KEY_SCHEDULED_INTERVAL = "scheduled_interval_minutes"
         const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
         const val KEY_LOCK_ON_SIM_REMOVAL = "lock_on_sim_removal"

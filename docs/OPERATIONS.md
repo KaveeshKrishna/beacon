@@ -19,7 +19,7 @@ Monitor at least:
 
 - `/api/health/live` every minute from an external uptime service.
 - `/api/health` every five minutes. A single `503` can be a Neon cold start; alert after three consecutive failures.
-- Cron success. The maintenance route returns `{ "ranAt": ..., "alertsSent": N }`; alert if it has not succeeded in 30 minutes.
+- Cron success. The maintenance route returns `{ "ranAt": ..., "alertsSent": N, "geofenceRetries": N }`; alert if it has not succeeded in 30 minutes. A rising `geofenceRetries` means geofence emails are failing and the route is still retrying them.
 - Email failure rate. Query `email_logs` for a spike in `status = 'failed'`.
 - Database storage and compute. Neon shows both; location retention is the main driver.
 
@@ -68,7 +68,8 @@ Each run:
 3. Deletes photos older than 30 days.
 4. Deletes email logs older than 90 days, geofence events older than 180 days, and audit logs older than `AUDIT_RETENTION_DAYS`.
 5. Marks `pending` and `delivered` commands past `expires_at` as `expired`.
-6. Evaluates offline devices and sends at most one alert per device per 24 hours.
+6. Retries geofence emails whose `notified_at` is still null in the last 24 hours, at most 50 per run. Each row is claimed before sending, so overlapping runs do not duplicate an alert.
+7. Evaluates offline devices and sends at most one alert per device per 24 hours.
 
 `vercel.json` schedules one run per day at 03:00 UTC. Hobby accounts cannot run more often. For timely offline alerts, add an external scheduler every 5–15 minutes; see [DEPLOYMENT.md](DEPLOYMENT.md#3-schedule-maintenance).
 
@@ -114,7 +115,7 @@ Encrypts:
 | `devices.fcm_token_enc` | `fcm:<deviceId>` |
 | `device_photos.data_enc` | `photo:<deviceId>` |
 
-AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.6`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
+AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.7`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
 
 To rotate:
 
@@ -208,6 +209,11 @@ Keep offline copies of `ENCRYPTION_KEY` and `AUTH_SECRET`. A database restore wi
      update devices set revoked_at = now()
      where user_id = '<uuid>' and revoked_at is null;
      ```
+   - Revoke only one device's mobile app access (Find My and recovery), keeping its tracking token:
+     ```sql
+     update mobile_sessions set revoked_at = now()
+     where device_id = '<uuid>' and revoked_at is null;
+     ```
    - Disable a compromised email key at the provider.
 3. **Assess.** Determine which accounts, devices, and data classes were affected. Use `audit_logs` (actor, action, target, hashed IP, user agent, time) and provider logs.
 4. **Notify.** For a self-hosted instance, the operator is responsible for applicable breach notification law. Do not publish other users' data.
@@ -233,7 +239,7 @@ Beacon is not a covert surveillance product. If an instance is reported as used 
 
 ### Weekly
 
-- Confirm the cron ran and `alertsSent` looks plausible.
+- Confirm the cron ran and `alertsSent` and `geofenceRetries` look plausible.
 - Check `/api/health` and deployment errors.
 - Review email failures and provider suppression lists.
 - Check Neon storage trend.

@@ -1,6 +1,6 @@
 "use client";
 
-import { Save, Smartphone, Trash2, Unlink } from "lucide-react";
+import { Save, ShieldOff, Smartphone, Trash2, Unlink } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -49,6 +49,8 @@ export function DeviceSettingsTab({
   const [error, setError] = useState<string | null>(null);
 
   const [unpairOpen, setUnpairOpen] = useState(false);
+  const [appAccessOpen, setAppAccessOpen] = useState(false);
+  const [revokingApp, setRevokingApp] = useState(false);
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [purgeConfirm, setPurgeConfirm] = useState("");
   const [removing, setRemoving] = useState(false);
@@ -87,6 +89,35 @@ export function DeviceSettingsTab({
       setError(errorMessage(caught));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function revokeAppAccess() {
+    setRevokingApp(true);
+    try {
+      const data = await apiFetch<{ revoked: number }>(
+        `/api/devices/${summary.id}/app-access`,
+        { method: "DELETE", body: JSON.stringify({}) },
+      );
+      setAppAccessOpen(false);
+      push({
+        title:
+          data.revoked > 0 ? "App access revoked" : "No linked app session",
+        description:
+          data.revoked > 0
+            ? "The phone is signed out of Find My and recovery on its next request. Tracking is unchanged."
+            : "This device had no active Find My or recovery session to revoke.",
+        tone: "success",
+      });
+      router.refresh();
+    } catch (caught) {
+      push({
+        title: "App access could not be revoked",
+        description: errorMessage(caught),
+        tone: "danger",
+      });
+    } finally {
+      setRevokingApp(false);
     }
   }
 
@@ -281,20 +312,39 @@ export function DeviceSettingsTab({
           <div className="space-y-3 p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[11.5px] font-medium">Unpair device</p>
+                <p className="text-[11.5px] font-medium">Revoke app access</p>
                 <p className="mt-0.5 text-[10.5px] leading-4 text-muted">
-                  Revokes the token immediately. Location history and geofences
-                  remain available to this account.
+                  Signs this phone out of Find My and recovery on its next
+                  request. Tracking and the device token stay active.
                 </p>
               </div>
               <Button
-                icon={<Unlink className="size-3.5" />}
-                onClick={() => setUnpairOpen(true)}
+                icon={<ShieldOff className="size-3.5" />}
+                onClick={() => setAppAccessOpen(true)}
                 size="sm"
                 variant="secondary"
               >
-                Unpair
+                Revoke
               </Button>
+            </div>
+            <div className="border-t border-line pt-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11.5px] font-medium">Unpair device</p>
+                  <p className="mt-0.5 text-[10.5px] leading-4 text-muted">
+                    Revokes the token immediately. Location history and
+                    geofences remain available to this account.
+                  </p>
+                </div>
+                <Button
+                  icon={<Unlink className="size-3.5" />}
+                  onClick={() => setUnpairOpen(true)}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Unpair
+                </Button>
+              </div>
             </div>
             <div className="border-t border-line pt-3">
               <div className="flex items-start justify-between gap-3">
@@ -320,6 +370,27 @@ export function DeviceSettingsTab({
           </div>
         </section>
       </div>
+
+      <Dialog
+        description="The phone is signed out of Find My and recovery on its next request. Tracking, geofences, and the device token are not changed. If you also want to stop reports, unpair the device."
+        footer={
+          <>
+            <Button onClick={() => setAppAccessOpen(false)} variant="ghost">
+              Cancel
+            </Button>
+            <Button
+              loading={revokingApp}
+              onClick={() => void revokeAppAccess()}
+              variant="danger"
+            >
+              Revoke app access
+            </Button>
+          </>
+        }
+        onOpenChange={setAppAccessOpen}
+        open={appAccessOpen}
+        title="Revoke this phone's app access?"
+      />
 
       <Dialog
         description="The device will stop reporting immediately. Its stored history remains attached to your account and can be exported."

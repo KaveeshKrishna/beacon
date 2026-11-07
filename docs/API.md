@@ -6,7 +6,7 @@ Beacon exposes a small JSON API over HTTPS. The dashboard and the Android app us
 - **Device routes** (`/api/device/*`) use a per-device bearer token. They do not use cookies or Origin checks. The phone has no account password.
 - **Mobile account routes** (`/api/mobile/*`) use a narrow, short-lived mobile bearer token obtained after a PKCE approval in the browser. They can list the account's devices, read their latest locations, and perform a Tier 1 MFA reset. They cannot issue commands, change settings, or read history.
 
-There is no API version prefix in `v0.1.6`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
+There is no API version prefix in `v0.1.7`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
 
 ---
 
@@ -68,7 +68,7 @@ Timestamps are RFC 3339 strings in UTC, for example `2026-10-23T14:05:00.000Z`. 
 | `201` | Created (geofence) |
 | `400` | Malformed request or invalid state |
 | `401` | Missing, invalid, expired, or revoked credentials |
-| `403` | Origin rejected, or a feature is unavailable |
+| `403` | Origin rejected, a feature is unavailable, or the device is in lost mode (`device_lost`) |
 | `404` | Resource not found or not owned by the caller |
 | `405` | Wrong HTTP method |
 | `409` | Conflict (device limit, duplicate photo request, already enabled) |
@@ -140,7 +140,7 @@ Returns active (non-revoked) devices for the signed-in user, newest activity fir
         "manufacturer": "Google",
         "model": "Pixel 7",
         "androidVersion": "16",
-        "appVersion": "0.1.6",
+        "appVersion": "0.1.7",
         "status": "active",
         "presence": "online",
         "trackingProfile": "balanced",
@@ -258,6 +258,10 @@ Revokes a device by default. Add `?purge=true` to delete the row and cascade loc
 ```
 
 Revocation takes effect on the next device request (`401`). A revoked device disappears from the dashboard list. Purging is irreversible and also invalidates the device token.
+
+#### `DELETE /api/devices/:id/app-access`
+
+Revokes every active mobile (Find My / recovery) session bound to this device. Returns `{ "revoked": <count> }`. The device token, tracking, location history, and geofences are unchanged. The phone is signed out on its next mobile request; the app clears its local link when it sees the `401`.
 
 ### Locations
 
@@ -438,6 +442,7 @@ All auth mutations require a trusted `Origin` and JSON content type except where
 | `POST` | `/api/auth/reset-password` | `{ token, password }` | Updates password, revokes all sessions |
 | `POST` | `/api/auth/password` | `{ currentPassword, newPassword }` | Changes password, revokes other sessions |
 | `GET` | `/api/auth/sessions` | none | Lists active sessions |
+| `GET` | `/api/auth/session` | none | Cheap liveness check; `401` once the session is revoked |
 | `DELETE` | `/api/auth/sessions/:id` | none | Revokes one session |
 | `POST` | `/api/auth/mfa/totp/setup` | none | `{ secret, uri, qrDataUrl }` |
 | `POST` | `/api/auth/mfa/totp/enable` | `{ code }` | Enables TOTP; returns 10 recovery codes once |
@@ -499,7 +504,7 @@ Unauthenticated; consumes a pairing code.
   "manufacturer": "Google",
   "model": "Pixel 7",
   "androidVersion": "16",
-  "appVersion": "0.1.6",
+  "appVersion": "0.1.7",
   "installHash": "9f2c...64 lowercase hex characters..."
 }
 ```
@@ -566,7 +571,7 @@ Unauthenticated; the one-time code is the credential. Requires JSON and is rate-
   "verifier": "the PKCE verifier held by the phone",
   "state": "the same state sent to approve",
   "installHash": "9f2c...64 lowercase hex characters...",
-  "appVersion": "0.1.6",
+  "appVersion": "0.1.7",
   "androidVersion": "16"
 }
 ```
@@ -677,7 +682,7 @@ Updates device state without a location fix and claims commands.
   "networkType": "cellular",
   "simState": "READY",
   "fcmToken": "optional-fcm-token",
-  "appVersion": "0.1.6",
+  "appVersion": "0.1.7",
   "androidVersion": "16"
 }
 ```
@@ -699,7 +704,7 @@ Response:
 
 ### `GET /api/device/commands`
 
-Polls for pending commands. Returns the same `commands` and `config` shape as heartbeat. Claiming marks rows `delivered` and returns at most eight, oldest first. The Android lost-mode service polls every two minutes; WorkManager covers the baseline and may be much slower.
+Polls for pending commands. Returns the same `commands` and `config` shape as heartbeat. Claiming marks rows `delivered` and returns at most eight, oldest first. The Android lost-mode service polls every two minutes, the instant-fence watcher every five minutes, and the 15-minute control worker covers devices with no foreground service. WorkManager location work may be much slower.
 
 ### `POST /api/device/commands/ack`
 
@@ -738,6 +743,8 @@ The paired app manages only the fences that belong to the device presenting the 
 
 `DELETE` takes `?id=<uuid>` and returns `{ "deleted": true }`. A fence that belongs to another device returns `404 not_found`, not `403`, so ids cannot be probed. Both writes are rate-limited and audited with `via: "android"`.
 
+While the device row is `lost`, `POST` and `DELETE` return `403 device_lost` and write an audit entry. Lost mode is enforced by the server so a person holding the phone cannot remove fences from the app.
+
 The runtime config includes the same geometry so the app can adapt its automatic check-in interval without another round trip.
 
 ### `POST /api/device/photos`
@@ -771,7 +778,7 @@ The server encrypts the sanitized bytes with AES-256-GCM and AAD `photo:{deviceI
 
 ### `POST /api/device/unpair`
 
-Revokes the calling device. Body: `{}` (JSON content type required). Returns `{ "revoked": true }`. The Android app calls this before clearing local state; if the network fails, it still clears local data and the dashboard can revoke the device.
+Revokes the calling device. Body: `{}` (JSON content type required). Returns `{ "revoked": true }`. The Android app calls this before clearing local state; if the network fails, it still clears local data and the dashboard can revoke the device. While the device is in lost mode this returns `403 device_lost`; the owner unpairs it from the dashboard instead.
 
 ---
 
@@ -786,6 +793,7 @@ A mobile token is **not** a device token and **not** a web session:
 - It cannot create commands, change settings, read location history, view photos, manage geofences, or delete a device.
 - Access tokens last 15 minutes. Refresh tokens last 30 days and rotate on every use.
 - The phone seals both tokens with the Android Keystore; the server stores only HMACs.
+- When the bound device row is `lost`, every mobile route and token refresh returns `403 device_lost`. Tracking and command delivery continue through the device token, but the phone cannot read sibling devices or use recovery.
 
 ### Linking a phone
 
@@ -956,7 +964,7 @@ Lists active mobile links for the signed-in account:
         "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
         "deviceName": "Pixel 7",
         "device": "Android · Chrome",
-        "userAgent": "Beacon/0.1.6 (Android 16)",
+        "userAgent": "Beacon/0.1.7 (Android 16)",
         "createdAt": "2026-10-16T09:00:00.000Z",
         "lastUsedAt": "2026-10-23T14:10:00.000Z",
         "accessExpiresAt": "2026-10-23T14:25:00.000Z",
@@ -1047,12 +1055,17 @@ The route is idempotent and safe to call frequently. It:
 4. Deletes audit logs older than `AUDIT_RETENTION_DAYS` and email logs older than 90 days.
 5. Deletes geofence events older than 180 days.
 6. Marks stale `pending`/`delivered` commands `expired`.
-7. Sends offline alerts and returns the count.
+7. Retries geofence emails for events whose `notified_at` is still null (last 24 hours, at most 50 per run) and returns the count.
+8. Sends offline alerts and returns the count.
 
 ```json
 {
   "ok": true,
-  "data": { "ranAt": "2026-10-23T03:00:00.000Z", "alertsSent": 1 }
+  "data": {
+    "ranAt": "2026-10-23T03:00:00.000Z",
+    "alertsSent": 1,
+    "geofenceRetries": 0
+  }
 }
 ```
 

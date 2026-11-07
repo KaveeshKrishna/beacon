@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 import { db } from "@/db";
 import { devices } from "@/db/schema";
 import {
+  ApiError,
   assertContentType,
   assertMethod,
   errorResponse,
@@ -33,6 +34,23 @@ export async function POST(request: NextRequest) {
       limit: 5,
       windowSec: 60 * 60,
     });
+
+    if (device.status === "lost") {
+      await audit({
+        userId: device.userId,
+        action: "device.lost_blocked",
+        targetType: "device",
+        targetId: device.id,
+        ipHash: ctx.ipHash,
+        userAgent: ctx.userAgent,
+        metadata: { route: "device.unpair", via: "android" },
+      });
+      throw new ApiError(
+        403,
+        "device_lost",
+        "This device is in lost mode. Unpair it from the dashboard instead.",
+      );
+    }
 
     await db()
       .update(devices)

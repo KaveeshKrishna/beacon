@@ -54,6 +54,23 @@ export async function POST(request: NextRequest) {
       ...RATE_LIMITS.deviceGeofence,
     });
 
+    if (device.status === "lost") {
+      await audit({
+        userId: device.userId,
+        action: "device.lost_blocked",
+        targetType: "device",
+        targetId: device.id,
+        ipHash: ctx.ipHash,
+        userAgent: ctx.userAgent,
+        metadata: { route: "geofence.create", via: "android" },
+      });
+      throw new ApiError(
+        403,
+        "device_lost",
+        "This device is in lost mode. Geofences can only be changed from the dashboard.",
+      );
+    }
+
     const existing = await db()
       .select({ id: geofences.id })
       .from(geofences)
@@ -114,6 +131,23 @@ export async function DELETE(request: NextRequest) {
       identifier: `${device.id}:${ctx.ip}`,
       ...RATE_LIMITS.deviceGeofence,
     });
+
+    if (device.status === "lost") {
+      await audit({
+        userId: device.userId,
+        action: "device.lost_blocked",
+        targetType: "device",
+        targetId: device.id,
+        ipHash: ctx.ipHash,
+        userAgent: ctx.userAgent,
+        metadata: { route: "geofence.delete", via: "android" },
+      });
+      throw new ApiError(
+        403,
+        "device_lost",
+        "This device is in lost mode. Geofences can only be changed from the dashboard.",
+      );
+    }
 
     const fenceId = request.nextUrl.searchParams.get("id");
     if (!fenceId || !/^[0-9a-f-]{36}$/i.test(fenceId)) {

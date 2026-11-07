@@ -88,7 +88,6 @@ private fun HomeHarness(update: UpdateUiState = UpdateUiState()) {
         pairing = PairingUiState(),
         busyAction = null,
         captureWorking = false,
-        lostControls = false,
         account = fakeAccount(direction = false),
         onLocate = {},
         onSync = {},
@@ -106,7 +105,9 @@ private fun HomeHarness(update: UpdateUiState = UpdateUiState()) {
         onCancelAccountLink = {},
         onOpenAccountScreen = {},
         onSyncIntervalChanged = {},
+        onInsideIntervalChanged = {},
         onOutsideIntervalChanged = {},
+        onInstantFenceAlertsChanged = {},
         onAllowScreenshotsChanged = {},
         onLockOnSimRemovalChanged = {},
         geofence = GeofenceUiState(),
@@ -118,7 +119,6 @@ private fun HomeHarness(update: UpdateUiState = UpdateUiState()) {
         onInstallUpdate = {},
         onDismissUpdate = {},
         onDismissPhoto = {},
-        onReturnToLost = {},
         onUnpair = {},
         onResetPairing = {},
     )
@@ -151,7 +151,9 @@ private fun fakeState(): BeaconState {    val now = System.currentTimeMillis()
         lostMode = false,
         trackingProfile = "balanced",
         syncIntervalMinutes = 0,
+        insideGeofenceMinutes = 0,
         outsideGeofenceMinutes = 0,
+        instantFenceAlerts = true,
         effectiveIntervalMinutes = 60,
         geofences = listOf(
             GeofenceInfo(

@@ -68,6 +68,15 @@ export function LoginForm() {
         can be revoked from Security.
       </p>
 
+      {searchParams.get("reason") === "session-ended" ? (
+        <p
+          className="mt-4 rounded-[10px] border border-line bg-surface px-3 py-2 text-[12px] leading-5 text-muted"
+          role="status"
+        >
+          This browser session was revoked. Sign in again to continue.
+        </p>
+      ) : null}
+
       <form className="mt-7 space-y-4" onSubmit={submit}>
         {error ? <FormMessage>{error}</FormMessage> : null}
 
