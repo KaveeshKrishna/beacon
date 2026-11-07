@@ -928,6 +928,13 @@ internal fun HomeScreen(
                     }
                     Spacer(Modifier.height(13.dp))
                     when {
+                        update.installing -> BeaconButton(
+                            text = "Preparing installer…",
+                            onClick = onInstallUpdate,
+                            modifier = Modifier.fillMaxWidth(),
+                            loading = true,
+                            icon = Icons.Rounded.SystemUpdate,
+                        )
                         update.downloading -> {
                             LinearProgressIndicator(
                                 progress = { update.progress / 100f },
@@ -952,6 +959,14 @@ internal fun HomeScreen(
                             onClick = onDownloadUpdate,
                             modifier = Modifier.fillMaxWidth(),
                             icon = Icons.Rounded.SystemUpdate,
+                        )
+                    }
+                    if (update.readyToInstall && !update.installing) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Android always asks you to confirm before it installs the update.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     if (update.error != null) {

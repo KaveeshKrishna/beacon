@@ -1,14 +1,14 @@
 package dev.beacon.app.update
 
-import android.content.ActivityNotFoundException
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import dev.beacon.app.BuildConfig
 import dev.beacon.app.network.ApiClient
 import java.io.File
@@ -160,6 +160,17 @@ class UpdateChecker(private val context: Context) {
         }
     }
 
+    /**
+     * Hands the verified APK to Android through a [PackageInstaller] session.
+     *
+     * The old implicit `ACTION_VIEW` handoff depended on the receiving
+     * installer being able to read a granted `FileProvider` URI. That is
+     * fragile across OEMs and newer Android releases. A session instead copies
+     * the bytes into the system installer, which reliably produces the
+     * mandatory "Do you want to update this app?" confirmation.
+     *
+     * Call this from a background thread: it copies the whole APK.
+     */
     fun install(file: File): InstallResult {
         if (!file.exists()) return InstallResult.Failed("Download the update again.")
         try {
@@ -174,23 +185,60 @@ class UpdateChecker(private val context: Context) {
             return InstallResult.Failed("Could not check the install permission.")
         }
 
+        val installer = context.packageManager.packageInstaller
+        var sessionId = -1
+        var committed = false
         return try {
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.updates",
-                file,
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val params = PackageInstaller.SessionParams(
+                PackageInstaller.SessionParams.MODE_FULL_INSTALL,
+            ).apply {
+                setAppPackageName(context.packageName)
+                setSize(file.length())
             }
-            context.startActivity(intent)
-            InstallResult.Started
-        } catch (_: ActivityNotFoundException) {
-            InstallResult.Failed("No app installer is available on this device.")
+            sessionId = installer.createSession(params)
+            val session = installer.openSession(sessionId)
+            try {
+                session.openWrite(SESSION_FILE, 0, file.length()).use { output ->
+                    file.inputStream().use { input ->
+                        input.copyTo(output, COPY_BUFFER_BYTES)
+                    }
+                    session.fsync(output)
+                }
+
+                val statusIntent = Intent(context, UpdateInstallReceiver::class.java).apply {
+                    setPackage(context.packageName)
+                    putExtra(UpdateInstallReceiver.EXTRA_APK_PATH, file.absolutePath)
+                }
+                val status = PendingIntent.getBroadcast(
+                    context,
+                    INSTALL_REQUEST_CODE,
+                    statusIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+                )
+                session.commit(status.intentSender)
+                committed = true
+                InstallResult.Started
+            } finally {
+                session.close()
+            }
+        } catch (_: SecurityException) {
+            InstallResult.Failed(
+                "Android blocked the update installer. Allow Beacon to install unknown apps, then try again.",
+            )
+        } catch (_: IOException) {
+            InstallResult.Failed(
+                "The update could not be handed to Android's installer. Check free storage and try again.",
+            )
         } catch (_: Exception) {
-            InstallResult.Failed("The installer could not be opened.")
+            InstallResult.Failed("Android's installer could not be started. Try again.")
+        } finally {
+            if (!committed && sessionId >= 0) {
+                try {
+                    installer.abandonSession(sessionId)
+                } catch (_: Exception) {
+                    // The session may already have failed on its own.
+                }
+            }
         }
     }
 
@@ -323,6 +371,9 @@ class UpdateChecker(private val context: Context) {
 
     private companion object {
         const val UPDATE_DIR = "updates"
+        const val SESSION_FILE = "base.apk"
+        const val INSTALL_REQUEST_CODE = 71
+        const val COPY_BUFFER_BYTES = 64 * 1024
         const val MAX_MANIFEST_CHARS = 64 * 1024
         const val MAX_APK_BYTES = 250L * 1024 * 1024
         const val MAX_REDIRECTS = 5

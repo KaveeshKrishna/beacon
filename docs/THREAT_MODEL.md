@@ -2,7 +2,7 @@
 
 This document describes what Beacon protects, who it protects against, and where the limits are. It is written for self-hosters and contributors, not as a marketing page. If a control is not implemented, it is listed under residual risk rather than implied.
 
-**Last reviewed:** November 2026, for `v0.1.7`.
+**Last reviewed:** November 2026, for `v0.1.8`.
 
 ---
 
@@ -197,7 +197,7 @@ Has an unlocked phone with an approved account link, reinstalls the app to claim
 
 ## 5. Residual risks
 
-These are known and accepted for `v0.1.7`:
+These are known and accepted for `v0.1.8`:
 
 1. **No certificate pinning.** Self-hosting and certificate rotation make pinning a poor default. A compromised system CA, or a rooted device with a modified trust store, can intercept traffic. User-installed CAs are not trusted.
 2. **No hardware-backed attestation.** The server cannot prove the app binary is unmodified. Rooted clients can forge locations.

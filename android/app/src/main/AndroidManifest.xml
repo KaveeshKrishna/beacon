@@ -87,16 +87,6 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.updates"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/update_paths" />
-        </provider>
-
         <service
             android:name=".tracking.TrackingService"
             android:exported="false"
@@ -115,6 +105,15 @@
 
         <receiver
             android:name=".notifications.NotificationActionReceiver"
+            android:exported="false" />
+
+        <!--
+          Receives the PackageInstaller session result and opens Android's
+          mandatory install confirmation. Non-exported: the session status
+          PendingIntent is explicit to this app.
+        -->
+        <receiver
+            android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
 
         <receiver

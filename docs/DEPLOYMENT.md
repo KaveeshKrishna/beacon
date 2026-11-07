@@ -1,6 +1,6 @@
 # Deployment
 
-Beacon is designed to run on free infrastructure with no always-on server. The reference stack is **Vercel Hobby + Neon Free + OpenFreeMap**, with optional Relay/Resend for email. Server-side FCM plumbing exists, but the Android client does not register for push in `v0.1.7`.
+Beacon is designed to run on free infrastructure with no always-on server. The reference stack is **Vercel Hobby + Neon Free + OpenFreeMap**, with optional Relay/Resend for email. Server-side FCM plumbing exists, but the Android client does not register for push in `v0.1.8`.
 
 If you change any of these choices, keep three invariants: HTTPS everywhere, a Postgres database with TLS, and a scheduler that can call the maintenance route.
 
@@ -37,6 +37,8 @@ Upgrading to 0.1.5 requires both migrations to be applied before the 0.1.5 serve
 Upgrading to 0.1.6 adds no migrations and no new server environment variables. The tag includes the post-0.1.5 reconnect sign-in fix, so deploy it normally; existing databases need no change.
 
 Upgrading to 0.1.7 also adds no migrations and no new server environment variables. Deploy the server before publishing the APK if you want the lost-mode enforcement and session-liveness routes available to clients on the new version. Existing devices keep working through the same device-token API.
+
+Upgrading to 0.1.8 is a client-only change. It adds no migrations and no new server environment variables. Replace the release assets and let the update endpoint serve the new APK; devices on 0.1.7 that already use the in-app updater can install it in place.
 
 > **Never point a production `db:push` at a database with real data.** `db:push` is a development convenience and can drop columns. Use `db:migrate` for deployments.
 
@@ -278,7 +280,7 @@ Use the direct (non-pooler) connection string for `pg_dump` when possible. Test 
 
 ### Encryption key
 
-`ENCRYPTION_KEY` is not stored in the database. If you lose it, TOTP secrets, SMS numbers, FCM tokens, and photos become unreadable. Keep at least two offline copies. Rotating it requires a migration that decrypts with the old key and re-encrypts with the new one; there is no built-in rotation command in `v0.1.7` (see [OPERATIONS.md](OPERATIONS.md#4-key-management)).
+`ENCRYPTION_KEY` is not stored in the database. If you lose it, TOTP secrets, SMS numbers, FCM tokens, and photos become unreadable. Keep at least two offline copies. Rotating it requires a migration that decrypts with the old key and re-encrypts with the new one; there is no built-in rotation command in `v0.1.8` (see [OPERATIONS.md](OPERATIONS.md#4-key-management)).
 
 ### Application updates
 

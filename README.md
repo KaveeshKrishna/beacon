@@ -8,7 +8,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 [![Next.js](https://img.shields.io/badge/Next.js-15.5-000)](https://nextjs.org)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)](https://developer.android.com)
 
-> **Status:** `v0.1.7` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
+> **Status:** `v0.1.8` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
 
 ---
 
@@ -28,7 +28,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 | Accounts | Argon2id passwords, opaque sessions, TOTP, email OTP, recovery codes, session management, audit log |
 | Find My | Browser-approved account link, linked-device list, distance and true-north compass direction, Maps hand-off |
 | Recovery | Tier 1 MFA reset from a linked phone after seven days, biometric plus password, all other sessions revoked |
-| Updates | In-app download with SHA-256 and signing-certificate verification, then Android's one-tap installer |
+| Updates | In-app download with SHA-256 and signing-certificate verification, then Android's mandatory install confirmation |
 | Email | Relay-first / Resend-first / single-provider modes, retry and failover, per-user override, delivery log |
 | UI | Responsive dark/light dashboard, MapLibre + OpenFreeMap (no API key), Google Maps hand-off |
 | Ops | Health checks, retention cron, rate limits, audit trail, Vercel + Neon deployment |
@@ -153,7 +153,7 @@ scripts/               Brand asset generation
 | [docs/EMAIL.md](docs/EMAIL.md) | Relay and Resend setup, priority, failover, logs |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Monitoring, key rotation, incidents, retention |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | What Android and the free stack cannot do |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.7` |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.8` |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and security policy |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and review standards |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations and enforcement |

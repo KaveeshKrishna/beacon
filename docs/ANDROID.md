@@ -211,7 +211,7 @@ A downloaded APK is accepted only when:
 - the package name and version name match,
 - the signing certificate matches the installed app's certificate.
 
-Android then shows its own install confirmation. A sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. The build that first contains this feature (0.1.2) had to be installed manually; 0.1.3 and later update in place.
+The app then hands the verified bytes to a `PackageInstaller` session and `UpdateInstallReceiver` opens Android's confirmation dialog when the session requests it. It deliberately does not use an implicit `ACTION_VIEW` + `FileProvider` handoff, so the installer never depends on a granted content URI. Android always shows its own confirmation; a sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. If **Allow installing unknown apps** is off, tapping **Install update** opens that settings page and the app retries automatically when the owner returns after granting it. Installer failures appear in the update card and on the **App updates** notification channel instead of failing silently. The update card also states that Android requires confirmation, so an install is never expected to happen without one. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. The build that first contains this feature (0.1.2) had to be installed manually; 0.1.3 and later update in place.
 
 ### Location quality
 
@@ -320,7 +320,7 @@ Residual risk is documented in [THREAT_MODEL.md](THREAT_MODEL.md). A rooted devi
 | `CAMERA` | Requested photo | Photo requests cannot be fulfilled |
 | `VIBRATE`, `WAKE_LOCK` | Alarm and reliable work | Reduced alarm effect |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Prompt only; user decides | OEM battery savers may delay work |
-| `REQUEST_INSTALL_PACKAGES` | Open the system installer for a verified update | Updates must be downloaded and installed manually |
+| `REQUEST_INSTALL_PACKAGES` | Hand a verified update to Android's `PackageInstaller` | The app opens the settings page and retries after the permission is granted |
 | `USE_BIOMETRIC` | Gate a Tier 1 MFA reset behind the device biometric | MFA reset is unavailable on this phone |
 
 The app explains each permission in context. It never requests a permission in the background or enables a capability silently.
@@ -340,6 +340,7 @@ dev.beacon.app
 ├── network/                  HttpURLConnection API client and DTOs
 ├── sync/                     Sync engine, command handler
 ├── tracking/                 Lost-mode and fence-watch foreground service
+├── update/                   Update manifest, verified download, PackageInstaller session, status receiver
 ├── work/                     Location worker, control worker, boot receiver
 ├── notifications/            Channels, alarm, photo and command notices
 ├── security/                 Device admin receiver and wrapper
@@ -362,7 +363,7 @@ cd android
 ./gradlew :app:lintRelease
 ```
 
-Unit tests cover version comparison for the in-app updater, geofence distance/bearing and circle geometry, check-in interval arithmetic (including the outside-fence override), and PKCE verification; there is no instrumentation suite yet. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
+Unit tests cover version comparison for the in-app updater, geofence distance/bearing and circle geometry, check-in interval arithmetic (including the outside-fence override), and PKCE verification; there is no instrumentation suite yet. The installer handoff itself is verified manually: install an older build, let it download a newer one, tap **Install update**, and complete Android's confirmation. That path cannot be covered by a JVM unit test because it crosses into `PackageInstaller` and the system UI. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
 
 ```bash
 adb shell am start -n dev.beacon.app.debug/dev.beacon.app.MainActivity
@@ -392,7 +393,8 @@ The app writes almost nothing to logcat by design. Use the in-app status line, t
 | Linked phones list is empty | No other active devices, or the account link was revoked | Pair the other phone or link this one again |
 | Direction arrow does not move | No rotation-vector sensor, or the phone is flat and still | The arrow still points to true north; hold the top of the phone north |
 | Check for updates says the server does not publish updates | `BEACON_ANDROID_*` variables are missing | Set the update variables and redeploy |
-| Install opens system settings | "Allow installing unknown apps" is off | Allow it for Beacon, return, tap Install again |
+| Install update opens system settings | "Allow installing unknown apps" is off | Allow it for Beacon; the app retries automatically when you return |
+| Play Protect scans or blocks the update | Android has not seen this sideloaded build | Tap **Scan app**, then **Install**; Play Protect is independent of Beacon |
 | Update download fails its integrity check | Release asset and `.sha256` do not match, or the server is stale | Re-upload both release assets; wait for the manifest cache |
 | Queue keeps growing | Server unreachable or certificate invalid | Check the server URL and device clock; verify HTTPS from the browser |
 

@@ -135,6 +135,7 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refresh()
+        viewModel.onAppResumed()
     }
 
     private fun requestLocation() {

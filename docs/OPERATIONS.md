@@ -115,7 +115,7 @@ Encrypts:
 | `devices.fcm_token_enc` | `fcm:<deviceId>` |
 | `device_photos.data_enc` | `photo:<deviceId>` |
 
-AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.7`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
+AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.8`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
 
 To rotate:
 

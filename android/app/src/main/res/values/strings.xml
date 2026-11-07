@@ -23,6 +23,8 @@
 
     <string name="channel_alarm_name">Alarm</string>
     <string name="channel_alarm_description">The remote alarm and lost-mode sound.</string>
+    <string name="channel_updates_name">App updates</string>
+    <string name="channel_updates_description">Download and install results for Beacon updates.</string>
     <string name="notification_alarm_title">Beacon alarm</string>
     <string name="notification_alarm_text">The alarm was started from your Beacon account.</string>
     <string name="notification_message_title">Message from your Beacon account</string>
@@ -30,4 +32,5 @@
     <string name="notification_photo_text">Open Beacon to take and upload a photo for this device.</string>
     <string name="notification_revoked_title">Device access revoked</string>
     <string name="notification_revoked_text">This device was unpaired from its Beacon account. Open the app to pair again.</string>
+    <string name="notification_update_failed_title">Update could not be installed</string>
 </resources>

@@ -6,7 +6,7 @@ Beacon exposes a small JSON API over HTTPS. The dashboard and the Android app us
 - **Device routes** (`/api/device/*`) use a per-device bearer token. They do not use cookies or Origin checks. The phone has no account password.
 - **Mobile account routes** (`/api/mobile/*`) use a narrow, short-lived mobile bearer token obtained after a PKCE approval in the browser. They can list the account's devices, read their latest locations, and perform a Tier 1 MFA reset. They cannot issue commands, change settings, or read history.
 
-There is no API version prefix in `v0.1.7`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
+There is no API version prefix in `v0.1.8`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
 
 ---
 
@@ -140,7 +140,7 @@ Returns active (non-revoked) devices for the signed-in user, newest activity fir
         "manufacturer": "Google",
         "model": "Pixel 7",
         "androidVersion": "16",
-        "appVersion": "0.1.7",
+        "appVersion": "0.1.8",
         "status": "active",
         "presence": "online",
         "trackingProfile": "balanced",
@@ -504,7 +504,7 @@ Unauthenticated; consumes a pairing code.
   "manufacturer": "Google",
   "model": "Pixel 7",
   "androidVersion": "16",
-  "appVersion": "0.1.7",
+  "appVersion": "0.1.8",
   "installHash": "9f2c...64 lowercase hex characters..."
 }
 ```
@@ -571,7 +571,7 @@ Unauthenticated; the one-time code is the credential. Requires JSON and is rate-
   "verifier": "the PKCE verifier held by the phone",
   "state": "the same state sent to approve",
   "installHash": "9f2c...64 lowercase hex characters...",
-  "appVersion": "0.1.7",
+  "appVersion": "0.1.8",
   "androidVersion": "16"
 }
 ```
@@ -682,7 +682,7 @@ Updates device state without a location fix and claims commands.
   "networkType": "cellular",
   "simState": "READY",
   "fcmToken": "optional-fcm-token",
-  "appVersion": "0.1.7",
+  "appVersion": "0.1.8",
   "androidVersion": "16"
 }
 ```
@@ -964,7 +964,7 @@ Lists active mobile links for the signed-in account:
         "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
         "deviceName": "Pixel 7",
         "device": "Android · Chrome",
-        "userAgent": "Beacon/0.1.7 (Android 16)",
+        "userAgent": "Beacon/0.1.8 (Android 16)",
         "createdAt": "2026-10-16T09:00:00.000Z",
         "lastUsedAt": "2026-10-23T14:10:00.000Z",
         "accessExpiresAt": "2026-10-23T14:25:00.000Z",

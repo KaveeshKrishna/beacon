@@ -20,12 +20,14 @@ object NotificationHelper {
     const val CHANNEL_ALERTS = "beacon.alerts"
     const val CHANNEL_LOST = "beacon.lost"
     const val CHANNEL_ALARM = "beacon.alarm"
+    const val CHANNEL_UPDATES = "beacon.updates"
 
     const val ID_TRACKING = 1001
     const val ID_MESSAGE = 2001
     const val ID_PHOTO = 2002
     const val ID_REVOKED = 2003
     const val ID_ALARM = 2004
+    const val ID_UPDATE = 2005
 
     const val EXTRA_PHOTO_REQUEST = "photo_request"
     const val ACTION_SILENCE_ALARM = "dev.beacon.app.SILENCE_ALARM"
@@ -64,6 +66,13 @@ object NotificationHelper {
                     NotificationManager.IMPORTANCE_HIGH,
                 ).apply {
                     description = context.getString(R.string.channel_alarm_description)
+                },
+                NotificationChannel(
+                    CHANNEL_UPDATES,
+                    context.getString(R.string.channel_updates_name),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = context.getString(R.string.channel_updates_description)
                 },
             ),
         )
@@ -161,6 +170,21 @@ object NotificationHelper {
             .setContentIntent(openAppIntent(context))
             .build()
         notify(context, ID_REVOKED, notification)
+    }
+
+    fun showUpdateInstallFailed(context: Context, message: String) {
+        val notification = base(
+            context,
+            CHANNEL_UPDATES,
+            context.getString(R.string.notification_update_failed_title),
+            message,
+        )
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent(context))
+            .build()
+        notify(context, ID_UPDATE, notification)
     }
 
     fun showAlarm(context: Context) {

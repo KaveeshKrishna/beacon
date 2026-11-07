@@ -6,6 +6,36 @@ Because Beacon handles location data and device control, security-relevant chang
 
 ---
 
+## 0.1.8 — 2026-11-08
+
+### Fixed
+
+- **Install update now opens Android's installer.** After a verified download, tapping **Install update** hands the APK to a `PackageInstaller` session instead of an implicit `ACTION_VIEW` + `FileProvider` handoff. Android's own "Do you want to update this app?" confirmation now appears, and completing it installs the update in place.
+- If **Allow installing unknown apps** is off, the app opens that settings page and retries the install automatically when the owner returns after granting it.
+- Installer failures are no longer silent: the update card shows the reason and an **App updates** notification is posted.
+- The update card now says that Android always asks for confirmation, and shows a **Preparing installer…** spinner while the APK is copied into the installer session.
+
+### Changed
+
+- The unused `${applicationId}.updates` `FileProvider` and its paths resource are removed. The photo-capture provider is unchanged.
+
+### Security
+
+- The SHA-256, package-name, version-name, and signing-certificate checks are unchanged. The system installer receives the exact bytes that passed those checks through a `PackageInstaller` session rather than a granted content URI. No new permission is added.
+
+### Migration
+
+- No database migration and no server change are required. Replace the release assets; the update endpoint can serve `0.1.8` to devices on `0.1.7`.
+
+### Verification
+
+- Android unit tests — 23 pass (`PkceTest` 4, `GeofenceMathTest` 7, `TrackingIntervalsTest` 8, `VersionComparisonTest` 4).
+- Android `assembleDebug`, `assembleRelease`, and `lintRelease` — pass.
+- Verified on an Android 16 emulator: tapping **Install update** opened the system confirmation ("Do you want to update this app?") and completing it installed the APK; with the permission denied, the app reported `NeedsPermission` and opened the unknown-apps settings page.
+- Release APK: versionCode 9, versionName 0.1.8, 24,959,555 bytes, SHA-256 `e246372760eeb1a8c89f551668ae955943cc6112953bc952e17b24d2effa9d5c`, signed with the existing Beacon certificate (`a2eb5d82…f53df4`). Release builds include `arm64-v8a` and `armeabi-v7a`.
+
+---
+
 ## 0.1.7 — 2026-11-07
 
 ### Added

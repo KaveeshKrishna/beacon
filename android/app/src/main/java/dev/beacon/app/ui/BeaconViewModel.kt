@@ -27,6 +27,7 @@ import dev.beacon.app.update.InstallResult
 import dev.beacon.app.update.UpdateCheck
 import dev.beacon.app.update.UpdateChecker
 import dev.beacon.app.update.UpdateInfo
+import dev.beacon.app.update.UpdateInstallStatus
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -68,6 +69,10 @@ data class UpdateUiState(
     val downloading: Boolean = false,
     val progress: Int = 0,
     val readyToInstall: Boolean = false,
+    val installing: Boolean = false,
+    // True while the owner is in Android settings granting the unknown-apps
+    // install permission. The activity retries once when it resumes.
+    val awaitingInstallPermission: Boolean = false,
     val error: String? = null,
     // The result of the last manual check. Kept in state so it stays visible
     // next to the button instead of disappearing with a transient snackbar.
@@ -148,6 +153,14 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
         syncAccountState()
         cleanupExpiredPhoto()
         autoCheckForUpdates()
+        viewModelScope.launch {
+            UpdateInstallStatus.failure.collect { message ->
+                if (message != null) {
+                    UpdateInstallStatus.takeFailure(app)
+                    _update.update { it.copy(installing = false, error = message) }
+                }
+            }
+        }
         viewModelScope.launch {
             container.state.collect { snapshot ->
                 if (snapshot.lostMode) {
@@ -1102,28 +1115,89 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
 
     fun installUpdate() {
         val info = _update.value.info ?: return
+        val current = _update.value
+        if (current.installing || current.downloading) return
+        _update.update {
+            it.copy(
+                installing = true,
+                awaitingInstallPermission = false,
+                error = null,
+            )
+        }
         viewModelScope.launch {
             val file = withContext(Dispatchers.IO) { checker.cachedFile(info) }
             if (file == null) {
                 _update.update {
-                    it.copy(error = "Download the update again.", readyToInstall = false)
+                    it.copy(
+                        installing = false,
+                        readyToInstall = false,
+                        error = "Download the update again.",
+                    )
                 }
                 return@launch
             }
-            when (val result = checker.install(file)) {
-                InstallResult.Started -> Unit
+            when (
+                val result = withContext(Dispatchers.IO) { checker.install(file) }
+            ) {
+                InstallResult.Started -> _update.update {
+                    it.copy(installing = false, error = null)
+                }
                 is InstallResult.NeedsPermission -> {
+                    _update.update {
+                        it.copy(
+                            installing = false,
+                            awaitingInstallPermission = true,
+                            error = null,
+                        )
+                    }
                     try {
                         app.startActivity(result.settingsIntent)
                     } catch (_: Exception) {
                         _update.update {
                             it.copy(
+                                awaitingInstallPermission = false,
                                 error = "Allow installing unknown apps for Beacon in system settings.",
                             )
                         }
                     }
                 }
-                is InstallResult.Failed -> _update.update { it.copy(error = result.message) }
+                is InstallResult.Failed -> _update.update {
+                    it.copy(installing = false, error = result.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Called whenever the activity resumes. The owner may be returning from
+     * Android's unknown-apps settings screen, so retry the install once if the
+     * permission was granted, and surface any installer failure that happened
+     * while the activity was behind the system confirmation.
+     */
+    fun onAppResumed() {
+        UpdateInstallStatus.takeFailure(app)?.let { message ->
+            _update.update { it.copy(installing = false, error = message) }
+        }
+
+        val current = _update.value
+        if (!current.awaitingInstallPermission) return
+        if (current.info == null) {
+            _update.update { it.copy(awaitingInstallPermission = false) }
+            return
+        }
+        val granted = try {
+            app.packageManager.canRequestPackageInstalls()
+        } catch (_: Exception) {
+            false
+        }
+        _update.update { it.copy(awaitingInstallPermission = false) }
+        if (granted) {
+            installUpdate()
+        } else {
+            _update.update {
+                it.copy(
+                    error = "Allow Beacon to install unknown apps in Android settings, then tap Install update again.",
+                )
             }
         }
     }
