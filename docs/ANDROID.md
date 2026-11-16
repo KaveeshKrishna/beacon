@@ -98,7 +98,7 @@ A reinstalled app should use **Reconnect this phone** instead. The browser signs
 
 1. **Pair or reconnect.** Enter the eight-character code from the dashboard, or tap **Reconnect this phone** after a reinstall and approve it in the browser. Device name defaults to the manufacturer and model and can be edited.
 2. **Grant location.** Fine or coarse location is required for any tracking. Background location ("Allow all the time") is required for periodic work while the app is closed.
-3. **Allow notifications.** Android 13+ asks explicitly. Without it, command notifications, the lost-mode notice, and the photo request are invisible, and Android may refuse the foreground service.
+3. **Allow notifications.** Android 13+ asks explicitly. Without it, command, alarm, and photo notices are hidden. Android also hides foreground-service notices from the notification drawer, but the service still runs and appears under **Active apps**.
 4. **Optional: SMS fallback.** Grant `SEND_SMS` only if you configure a fallback number in the dashboard. SMS is a last resort and costs carrier rates.
 5. **Optional: ignore battery optimizations.** This is the single largest reliability improvement on Xiaomi, Samsung, OnePlus, and other aggressive OEM builds.
 6. **Optional: device admin.** Needed only for remote screen lock. It grants the `force-lock` policy and nothing else.
@@ -127,7 +127,7 @@ When no foreground service runs, a separate 15-minute control worker polls comma
 
 ### Lost mode: foreground service
 
-Enabling lost mode starts a location foreground service with a persistent notification. While it runs:
+Enabling lost mode starts a location foreground service with the notification Android requires. While it runs:
 
 - GPS and network fixes are requested every 30 seconds with a 20 m displacement filter.
 - Each accepted fix triggers an immediate sync, rate-limited to one attempt per 20 seconds.
@@ -135,9 +135,13 @@ Enabling lost mode starts a location foreground service with a persistent notifi
 - The service is `START_STICKY` and restarts after process death where Android allows it.
 - The service stops itself if the device is unpaired, revoked, or lost mode is switched off.
 
-Android 12+ restricts starting a foreground service from the background. If the start is refused, the command is acknowledged as `failed` with an explanation, and periodic tracking continues. Opening the app or tapping the notification gives Android the foreground context it requires.
+Android 12+ restricts starting a foreground service from the background. If the start is refused, the command is acknowledged as `failed` with an explanation, and periodic tracking continues. Opening the app gives Android the foreground context it requires.
 
-The app does **not** request `SCHEDULE_EXACT_ALARM`, wake locks held indefinitely, or a boot-time foreground service. Those choices trade a small amount of punctuality for store-policy and battery sanity.
+The notification is an indicator, not the tracking engine. On Android 13+, denying `POST_NOTIFICATIONS` hides it from the drawer but does not stop the foreground service. On Android 14+, the owner can dismiss even an ongoing foreground-service notification; tracking continues. Beacon has no notification-deleted callback and no re-post loop. The notification returns the next time the service calls `startForeground()` or refreshes it — on service start, a cadence or mode change, app launch, reboot, or a command-triggered reschedule.
+
+The Android 13+ **Active apps → Stop** action is different: it kills the entire app, not just the service. WorkManager jobs still run at their scheduled time, so a later worker can restart tracking if the mode requires it. Settings force-stop blocks work and boot receivers until the app is opened manually.
+
+The app does **not** request `SCHEDULE_EXACT_ALARM` or hold an indefinite wake lock. It does attempt to restart lost mode after boot, but Android may refuse a foreground-service start from the background; periodic work remains the fallback. These choices trade a small amount of punctuality for store-policy and battery sanity.
 
 ### Check-in interval and geofences
 
@@ -155,7 +159,7 @@ The check-in card exposes separate **inside fences** and **outside fences** valu
 
 Fences can be created from the dashboard or drawn in the app: **Geofences → Add**. The editor is a full-screen map. Tap the map to move the centre, drag the orange radius handle, or use the slider and presets (50 m–5 km). It creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry also decides the next check-in.
 
-**Instant fence alerts** (on by default) keeps a foreground watcher running in Automatic mode when at least one fence exists. It requests a fix about every two minutes with a 50 m displacement filter, compares each fix with the cached geometry on the phone, and uploads immediately on a transition. The same service polls commands every five minutes. This is the app-only way to notice a crossing within minutes without Google Play services; the cost is a persistent notification. Turning it off, refusing the foreground service, or using a fixed interval returns to detection at the next scheduled check-in. New or changed fence geometry resets the baseline, so the first fix after a sync cannot create a false event.
+**Instant fence alerts** (on by default) keeps a foreground watcher running in Automatic mode when at least one fence exists. It requests a fix about every two minutes with a 50 m displacement filter, compares each fix with the cached geometry on the phone, and uploads immediately on a transition. The same service polls commands every five minutes. This is the app-only way to notice a crossing within minutes without Google Play services; the cost is the required foreground-service notification. Turning it off, refusing the foreground service, or using a fixed interval returns to detection at the next scheduled check-in. New or changed fence geometry resets the baseline, so the first fix after a sync cannot create a false event.
 
 With the watcher off, adaptation is evaluated only when a check-in happens, using the fix just taken. Even with it on, Android can delay the service, an indoor fix may not move, and the server still evaluates the event against the uploaded fix. Fence alerts are faster, not guaranteed instant.
 
@@ -198,7 +202,7 @@ Unlinking clears the local access and refresh tokens first, then makes a best-ef
 
 ### Boot and updates
 
-`BootReceiver` listens for `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, re-schedules periodic work, and restarts lost mode if it was active. The app does not start before the user unlocks the device for the first time after a reboot, because credential-encrypted storage is unavailable.
+`BootReceiver` listens for `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, re-schedules periodic work, and attempts to restart lost mode if it was active. Android may refuse the foreground-service start; periodic work remains the fallback. The app does not start before the user unlocks the device for the first time after a reboot, because credential-encrypted storage is unavailable.
 
 ### In-app updates
 
@@ -211,7 +215,7 @@ A downloaded APK is accepted only when:
 - the package name and version name match,
 - the signing certificate matches the installed app's certificate.
 
-The app then hands the verified bytes to a `PackageInstaller` session and `UpdateInstallReceiver` opens Android's confirmation dialog when the session requests it. It deliberately does not use an implicit `ACTION_VIEW` + `FileProvider` handoff, so the installer never depends on a granted content URI. Android always shows its own confirmation; a sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. If **Allow installing unknown apps** is off, tapping **Install update** opens that settings page and the app retries automatically when the owner returns after granting it. Installer failures appear in the update card and on the **App updates** notification channel instead of failing silently. The update card also states that Android requires confirmation, so an install is never expected to happen without one. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. The build that first contains this feature (0.1.2) had to be installed manually; 0.1.3 and later update in place.
+The app then hands the verified bytes to a `PackageInstaller` session and `UpdateInstallReceiver` opens Android's confirmation dialog when the session requests it. It deliberately does not use an implicit `ACTION_VIEW` + `FileProvider` handoff, so the installer never depends on a granted content URI. Android always shows its own confirmation; a sideloaded app cannot install an update silently unless it is a Device Owner or distributed through Play. If **Allow installing unknown apps** is off, tapping **Install update** opens that settings page and the app retries automatically when the owner returns after granting it. Installer failures appear in the update card and on the **App updates** notification channel instead of failing silently. The update card also states that Android requires confirmation, so an install is never expected to happen without one. Configure the update variables on the server; nothing about the update channel is embedded in the APK, so every self-hoster controls their own. Builds before 0.1.8 used an implicit `ACTION_VIEW` handoff, which could fail on newer Android releases; 0.1.8 and later hand the APK to a `PackageInstaller` session and install in place. The build that first added update checks (0.1.2) had to be installed manually.
 
 ### Location quality
 
@@ -314,7 +318,7 @@ Residual risk is documented in [THREAT_MODEL.md](THREAT_MODEL.md). A rooted devi
 | `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | Location fixes | No tracking |
 | `ACCESS_BACKGROUND_LOCATION` | Periodic sync while closed | WorkManager may be restricted to foreground use |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` | Lost-mode live tracking | Lost mode falls back to periodic work |
-| `POST_NOTIFICATIONS` | Command, alarm, and photo notices | Notices are invisible; FGS may not start |
+| `POST_NOTIFICATIONS` | Command, alarm, and photo notices | Notices are hidden from the drawer; the FGS still runs and appears under **Active apps** |
 | `RECEIVE_BOOT_COMPLETED` | Re-schedule after reboot | Tracking resumes only after the app is opened |
 | `SEND_SMS` | Optional SMS fallback | No SMS fallback |
 | `CAMERA` | Requested photo | Photo requests cannot be fulfilled |
@@ -367,7 +371,7 @@ Unit tests cover version comparison for the in-app updater, geofence distance/be
 
 ```bash
 adb shell am start -n dev.beacon.app.debug/dev.beacon.app.MainActivity
-adb logcat -s Beacon:D
+adb logcat -s UpdateInstall:D
 ```
 
 The app writes almost nothing to logcat by design. Use the in-app status line, the notification, and the dashboard activity feed for diagnosis. Before distributing a release, complete the physical-device checklist in [DEPLOYMENT.md](DEPLOYMENT.md#release-checklist-for-the-app).
@@ -384,6 +388,7 @@ The app writes almost nothing to logcat by design. Use the in-app status line, t
 | "That reconnect response expired" | The browser code is older than 10 minutes, or the app was rebuilt/reinstalled mid-flow | Start **Reconnect this phone** again |
 | Commands take 15–60 minutes | No FCM; WorkManager is inexact | Use lost mode for a 2-minute poll, or open the app |
 | Lost mode says the service was refused | Android 12+ background FGS restriction | Open the app, then enable lost mode again |
+| Lost-mode notification disappeared but tracking continues | Android 14+ allows dismissing ongoing FGS notifications; Beacon does not re-post it | Reopen the app or change tracking mode to refresh it; **Active apps** still shows the service |
 | No tracking with the screen off | Background location denied or OEM battery saver | Grant "Allow all the time"; exempt from battery optimization |
 | Photo request does nothing | Notifications denied or request expired | Check notification settings; request a new photo |
 | "This device is no longer authorised" | Device revoked or unpaired | Remove the old device and pair again |

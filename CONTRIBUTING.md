@@ -62,7 +62,7 @@ The debug app is `dev.beacon.app.debug`. Set a local server with the pairing scr
 
 ## Checks
 
-Run the same checks as CI before opening a pull request:
+Run these checks before opening a pull request:
 
 ```bash
 npm run typecheck
@@ -71,8 +71,10 @@ npm test
 npm run build
 
 cd android
-./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
+
+The Android JVM tests run on the host and need no emulator. CI currently runs the web checks, `assembleDebug`, and `lintRelease`; adding `testDebugUnitTest` to CI is tracked in [docs/ROADMAP.md](docs/ROADMAP.md). Release signing, `assembleRelease`, and the full release checklist stay in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#release-checklist-for-the-app).
 
 If you change the schema:
 
@@ -163,8 +165,8 @@ Keep pull requests focused. A security fix should not carry an unrelated redesig
 
 ## Tests
 
-- Add a unit test for every crypto, parsing, geofence, or provider-ordering change.
-- Tests live in `test/` and run with Vitest.
+- Add a unit test for every crypto, parsing, geofence, provider-ordering, updater-version, or interval-arithmetic change.
+- Web tests live in `test/` and run with Vitest. Android JVM tests live in `android/app/src/test` and run with `./gradlew :app:testDebugUnitTest`.
 - Do not hit the network or a production database in a unit test; inject or mock the boundary.
 - Integration tests against Postgres are planned; until then, describe the manual verification in the pull request.
 - A bug fix should include a regression test when the bug is reachable in a unit test.

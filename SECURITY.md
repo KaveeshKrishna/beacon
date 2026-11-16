@@ -13,7 +13,7 @@ Beacon handles location history and device control. Security reports are taken s
 | `0.1.x` | Security fixes, best effort |
 | Older | Not supported |
 
-`v0.1.0` is a self-hosted beta. It has not been independently audited. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it for personal safety.
+`v0.1.8` is a self-hosted beta. It has not been independently audited. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it for personal safety.
 
 ---
 
@@ -97,6 +97,7 @@ The full assets, adversaries, and residual risks are in [docs/THREAT_MODEL.md](d
 | Client address | Forwarded headers are trusted only on Vercel or when a self-hoster explicitly declares a proxy |
 | Audit | Append-only application writes for security-relevant actions; hashed IPs and user agents |
 | Android | HTTPS-only, no redirects, Keystore-encrypted token and queue, `FLAG_SECURE` release builds, backups disabled |
+| App updates | SHA-256, package name, version name, and signing certificate verified before the APK enters a `PackageInstaller` session; Android still requires the owner's confirmation |
 | Privacy | No analytics, trackers, session replay, or third-party scripts; map tiles fetched by the browser only for the visible viewport |
 
 Secrets live only in environment variables. No production credentials, keystores, or personal domains are committed. `.env*` is ignored except `.env.example`, which contains placeholders.
@@ -105,7 +106,7 @@ Secrets live only in environment variables. No production credentials, keystores
 
 ## Hardening checklist
 
-Use this before exposing an instance to the public internet. It is also the checklist referenced by the release plan.
+Use this before exposing an instance to the public internet. It is also linked from the pre-release checks in [docs/OPERATIONS.md](docs/OPERATIONS.md#before-every-release).
 
 - [ ] `APP_URL` is the final HTTPS origin, with no trailing slash.
 - [ ] `TRUSTED_PROXY` matches the deployment: `vercel` on Vercel, `forwarded` only behind a proxy that overwrites the peer address, otherwise `none`.
@@ -118,6 +119,7 @@ Use this before exposing an instance to the public internet. It is also the chec
 - [ ] Neon and Vercel access is limited to the operator, with MFA on both accounts.
 - [ ] No `.env`, keystore, `local.properties`, APK, or personal notes are tracked.
 - [ ] The release APK is signed with a key that is not in the repository, and its SHA-256 is published.
+- [ ] If in-app updates are enabled, `/api/app/update` serves the intended version and checksum, and the downloaded APK passes the app's signature check.
 - [ ] `FLAG_SECURE` is active in the release build.
 - [ ] Rate limits have been exercised with a manual burst.
 - [ ] Dependabot alerts and code scanning are enabled.
@@ -128,7 +130,7 @@ Use this before exposing an instance to the public internet. It is also the chec
 
 ## Known residual risks
 
-These are accepted for `v0.1.0` and documented rather than hidden:
+These are accepted for `v0.1.8` and documented rather than hidden:
 
 1. No independent audit or penetration test.
 2. No certificate pinning; a compromised system CA, or a rooted device with a modified trust store, can intercept Android traffic. User-installed CAs are not trusted.
@@ -155,6 +157,7 @@ See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the full analysis.
 - Gradle dependencies are pinned in `android/app/build.gradle.kts` and the plugin block.
 - GitHub Actions are pinned to major versions; pin to commit SHAs before a high-assurance release.
 - Release artifacts are built from a clean checkout. The APK checksum is published next to the download.
+- The in-app updater verifies the SHA-256, package name, version name, and signing certificate of the downloaded APK before opening a `PackageInstaller` session. The server-side manifest is public, so these checks are the trust boundary, not the transport alone.
 - The Android signing key is generated and backed up by the operator, never by the project.
 
 Report a suspected supply-chain issue through the same private channel.

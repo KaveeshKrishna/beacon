@@ -36,13 +36,16 @@ This roadmap is ordered by risk and user value, not by novelty. Dates are delibe
 
 **Exit:** CI fails on a broken migration or auth boundary, with no production credentials.
 
-### 3. Android tests
+### 3. Expand Android tests
 
-- JVM tests for server URL validation, point serialization, queue pruning, and command mapping.
-- Compose UI tests for pairing validation, the permission checklist, lost mode, and photo request.
-- A smoke test that installs the debug APK in an emulator and opens the main activity.
+The current JVM suite covers updater version comparison, geofence distance/bearing and circle geometry, check-in interval arithmetic, and PKCE verification.
 
-**Exit:** `./gradlew test` is meaningful, not `NO-SOURCE`.
+- Add JVM tests for server URL validation, point serialization, queue pruning, and command mapping.
+- Add Compose UI tests for pairing validation, the permission checklist, lost mode, and photo request.
+- Add a smoke test that installs the debug APK in an emulator and opens the main activity.
+- Run the JVM suite in CI.
+
+**Exit:** `./gradlew :app:testDebugUnitTest` covers those paths and runs in CI; the suite is no longer limited to the four existing test classes.
 
 ### 4. Firebase Cloud Messaging
 

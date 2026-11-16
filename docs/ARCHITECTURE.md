@@ -147,7 +147,7 @@ Android SyncEngine
 
 `client_point_id` is generated on the phone. Retries after a timeout therefore insert nothing new: the count comes back as `duplicates` and the client still deletes the batch. The queue deletes rows only after a successful HTTP response, so a crash between upload and delete is safe.
 
-Geofence evaluation is server-side on ingest, but the phone keeps an encrypted cache of fence geometry. In Automatic mode with the default **Instant fence alerts**, a foreground watcher compares about every two-minute fix with that cache and uploads on a transition, so the server sees the event without waiting for the next scheduled check-in. If the watcher is off or Android refuses the service, the transition is noticed at the next check-in. The watcher is opt-out because it requires a persistent notification.
+Geofence evaluation is server-side on ingest, but the phone keeps an encrypted cache of fence geometry. In Automatic mode with the default **Instant fence alerts**, a foreground watcher compares about every two-minute fix with that cache and uploads on a transition, so the server sees the event without waiting for the next scheduled check-in. If the watcher is off or Android refuses the service, the transition is noticed at the next check-in. The watcher is opt-out because it requires a foreground-service notification.
 
 ### Command lifecycle
 
@@ -288,7 +288,8 @@ dev.beacon.app/
   core/                    prefs, Keystore crypto, state model
   data/                    queue, device status reader, point model
   location/                sampler, WorkManager scheduler
-  tracking/                lost-mode foreground service
+  tracking/                lost-mode and fence-watch foreground service
+  update/                  update manifest, verified download, PackageInstaller session
   sync/                    sync engine, command handler
   network/                 HTTPS client, API models
   notifications/           channels, alarm, actions
@@ -304,7 +305,7 @@ Key design choices:
 - **No DI framework.** `AppContainer` is constructed once in `Application`; workers and services reach it through the application cast. This keeps startup predictable and avoids reflection in release builds.
 - **No Room.** The offline queue is one table with a hand-written `SQLiteOpenHelper`. The payload is already encrypted JSON; an ORM would add code without adding safety.
 - **No Retrofit.** A handful of endpoints and one JSON envelope do not justify the dependency. Timeouts, redirect rejection, and response-size limits are explicit.
-- **Foreground service only in lost mode or the opt-out fence watcher.** A permanent tracking notification is a battery and privacy cost that most users do not need. WorkManager handles the baseline, and a 15-minute control worker covers command latency when no service runs.
+- **Foreground service only when the schedule needs it.** Lost mode, a fixed interval under 15 minutes, or the opt-out instant-fence watcher start the service. A notification is a battery and privacy cost that most users do not need, so WorkManager handles the 15-minute-and-longer baseline and a separate 15-minute control worker covers command latency when no service runs.
 - **State is a snapshot.** `BeaconState` is rebuilt from preferences and the queue count; there is no long-lived in-memory state to drift after process death.
 
 ---

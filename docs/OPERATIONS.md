@@ -261,7 +261,7 @@ Beacon is not a covert surveillance product. If an instance is reported as used 
 
 ### Before every release
 
-Follow the deployment checklist in [DEPLOYMENT.md](DEPLOYMENT.md#6-backups-and-upgrades) and the release checklist in [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md#8-release-checklist).
+Follow the upgrade checklist in [DEPLOYMENT.md](DEPLOYMENT.md#6-backups-and-upgrades), the app release checklist in [DEPLOYMENT.md](DEPLOYMENT.md#release-checklist-for-the-app), and the hardening checklist in [SECURITY.md](../SECURITY.md#hardening-checklist).
 
 ---
 

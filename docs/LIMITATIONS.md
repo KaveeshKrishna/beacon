@@ -36,7 +36,7 @@ Android does not promise exact background schedules.
 - WorkManager periodic work is inexact. Doze and App Standby can delay it by hours.
 - Aggressive OEM builds (Xiaomi/MIUI, Samsung, OnePlus, Oppo, Vivo) may kill background work even with a valid scheduler. Battery optimization exemption helps; it is not a guarantee.
 - Android 12+ can refuse a foreground-service start from the background. Lost mode may fall back to periodic work until the app is opened.
-- The lost-mode foreground service keeps a persistent notification. It cannot be hidden, and hiding it would violate Android policy.
+- The lost-mode foreground service must show a notification. On Android 13+, denying notification permission hides it from the notification drawer, though Android still lists the running app under **Active apps**. On Android 14+, the owner can dismiss even an ongoing foreground-service notification; that does not stop the service, and Beacon does not fight the dismissal with a re-post loop. The notification returns on the next service start or tracking update.
 - The app does not request exact alarms or hold an indefinite wake lock.
 
 **Practical impact:** outside lost mode, the 15-minute control worker is the usual ceiling for command latency, but Doze and aggressive OEMs can delay it. The in-app check-in card shows the tracking cadence, not the control poll. Lost mode polls every two minutes while its service runs, and the instant-fence watcher polls every five minutes.
@@ -45,7 +45,7 @@ GPS is receive-only. It cannot carry commands or uploads, and no app-only Androi
 
 ### No push on Android yet
 
-The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.8` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is the top item in [ROADMAP.md](ROADMAP.md).
+The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.8` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is planned in [ROADMAP.md](ROADMAP.md), behind the more urgent testing and field-validation work.
 
 ---
 
@@ -175,7 +175,7 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 Beacon is for locating devices you own or are authorised to manage. It is not for tracking people without their knowledge.
 
 - Pairing requires an authenticated account and physical access to an unlocked device.
-- The app is visible, its notification is persistent in lost mode, and photo capture requires user action.
+- The app is visible, it shows a foreground-service notification in lost mode (dismissible on Android 14+), and photo capture requires user action.
 - Consent cannot be verified by software. The operator is responsible for complying with applicable law, including notification and data-protection rules.
 - The AGPL requires source availability to network users if you modify and host Beacon. See [LICENSE](../LICENSE).
 

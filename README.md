@@ -102,7 +102,7 @@ The reference deployment is Vercel Hobby + Neon Free:
 3. Set `APP_URL` to the final HTTPS origin **before** the first production login.
 4. Run `npm run db:migrate` against the production database.
 5. Deploy. The included [`vercel.json`](vercel.json) registers one daily maintenance run.
-6. To enable in-app Android updates, set `BEACON_ANDROID_UPDATE_MANIFEST_URL` (or the explicit `BEACON_ANDROID_*` values) and redeploy. Sideloaded builds still show Android's one-tap install confirmation.
+6. To enable in-app Android updates, set `BEACON_ANDROID_UPDATE_MANIFEST_URL` (or the explicit `BEACON_ANDROID_VERSION`, `BEACON_ANDROID_APK_URL`, and `BEACON_ANDROID_APK_SHA256` values) and redeploy. The app verifies the download and hands it to Android's package installer, which shows the system update confirmation.
 
 Vercel Hobby allows only one cron run per day. Offline alerts therefore need an external scheduler hitting `/api/cron/maintenance` every 5–15 minutes with `Authorization: Bearer $CRON_SECRET`. Full instructions, including a free scheduler option, are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
@@ -167,10 +167,10 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
-cd android && ./gradlew :app:assembleDebug :app:assembleRelease :app:lintRelease
+cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:lintRelease
 ```
 
-The unit suite covers cryptography, password hashing, TOTP, geofence math, and email provider ordering. End-to-end API and device flows require a live database; no production credentials are included in this repository.
+The web unit suite covers cryptography, password hashing, TOTP, geofence math, and email provider ordering. The Android JVM suite covers updater version comparison, geofence geometry, check-in interval arithmetic, and PKCE verification. End-to-end API and device flows require a live database; no production credentials are included in this repository.
 
 ## Design
 

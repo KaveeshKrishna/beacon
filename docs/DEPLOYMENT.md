@@ -38,7 +38,7 @@ Upgrading to 0.1.6 adds no migrations and no new server environment variables. T
 
 Upgrading to 0.1.7 also adds no migrations and no new server environment variables. Deploy the server before publishing the APK if you want the lost-mode enforcement and session-liveness routes available to clients on the new version. Existing devices keep working through the same device-token API.
 
-Upgrading to 0.1.8 is a client-only change. It adds no migrations and no new server environment variables. Replace the release assets and let the update endpoint serve the new APK; devices on 0.1.7 that already use the in-app updater can install it in place.
+Upgrading to 0.1.8 is a client-only change. It adds no migrations and no new server environment variables. Replace the release assets and let the update endpoint serve the new APK. Devices on 0.1.7 can be offered 0.1.8, but the old `ACTION_VIEW` handoff may fail on newer Android releases; if it does, sideload 0.1.8 manually once. From 0.1.8 onward, **Install update** uses the `PackageInstaller` session and installs in place.
 
 > **Never point a production `db:push` at a database with real data.** `db:push` is a development convenience and can drop columns. Use `db:migrate` for deployments.
 
@@ -91,6 +91,21 @@ The full list, including Relay/Resend/FCM and map style overrides, is in [`.env.
 
 > **Reverse proxy note:** IP rate limits and audit hashes need the real client address. Forwarded headers can be forged by clients, so Beacon ignores them by default outside Vercel. On Vercel, leave `TRUSTED_PROXY=vercel`; the edge sets the headers and `VERCEL=1`. Behind nginx, Caddy, or Traefik, set `TRUSTED_PROXY=forwarded` **and** make the proxy replace or append the peer address, for example: `proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. If the app is exposed directly, use `TRUSTED_PROXY=none` (all requests share one rate-limit bucket). Never set `forwarded` if clients can reach the origin without passing through the proxy.
 
+### In-app Android updates
+
+The app asks the paired server for `GET /api/app/update`. Configure one of two source forms:
+
+| Variable | Notes |
+| --- | --- |
+| `BEACON_ANDROID_UPDATE_MANIFEST_URL` | Preferred. A simple `{ versionName, apkUrl, sha256, sizeBytes?, notes? }` document or a GitHub `releases/latest` API response. For GitHub, upload assets named exactly `beacon.apk` and `beacon.apk.sha256` to the release. |
+| `BEACON_ANDROID_VERSION` + `BEACON_ANDROID_APK_URL` + `BEACON_ANDROID_APK_SHA256` | Explicit fallback, used only when the manifest URL is unset. All three are required. The response reports `sizeBytes: 0` and empty notes. |
+
+When neither is set, the route returns `{"ok":true,"data":{"enabled":false}}` and the app says no update source is configured. The manifest URL takes precedence over the explicit triple; if it is set but fails to fetch or parse, there is no fallback to the triple.
+
+The APK must be signed with the same key as the installed app. The app verifies the SHA-256, package name, version name, and signing certificate before handing the file to Android's package installer. `NEXT_PUBLIC_APK_URL` is only the landing-page download link; it does not configure in-app updates.
+
+Public responses are cached for 300 seconds and the upstream manifest and checksum for 900 seconds. After replacing a release asset under the same tag, allow up to 15 minutes before `/api/app/update` reflects it.
+
 5. Deploy. The first build should take 1–3 minutes.
 6. Open the deployment URL and confirm `/api/health/live` returns `200` and `/api/health` reports the database as reachable.
 
@@ -104,14 +119,16 @@ Vercel’s own `VERCEL_URL` is also accepted as an origin, so preview deployment
 
 ## 3. Schedule maintenance
 
-The maintenance route (`/api/cron/maintenance`) does six things:
+The maintenance route (`/api/cron/maintenance`) runs these cleanup and alerting steps:
 
-1. Deletes expired sessions, MFA challenges, email tokens/codes, pairing codes, and rate-limit rows.
+1. Deletes expired sessions, MFA challenges, email tokens/codes, pairing codes, mobile link codes, device reconnect codes, rate-limit rows, and expired mobile sessions.
 2. Deletes locations older than `LOCATION_RETENTION_DAYS`.
-3. Deletes geofence events older than 180 days.
-4. Deletes photos older than 30 days.
-5. Deletes audit and email logs past their retention.
-6. Sends offline alerts and expires stale commands.
+3. Deletes photos older than 30 days.
+4. Deletes audit logs and email logs past their retention.
+5. Deletes geofence events older than 180 days.
+6. Marks stale `pending` and `delivered` commands `expired`.
+7. Retries geofence emails that are still unconfirmed in the last 24 hours.
+8. Sends offline alerts.
 
 `vercel.json` includes:
 
@@ -254,9 +271,12 @@ Upload the APK to a stable HTTPS URL and set `NEXT_PUBLIC_APK_URL`. The landing 
 - [ ] `beaconBaseUrl` is the production HTTPS origin.
 - [ ] Keystore backed up in two places.
 - [ ] APK signed and `apksigner verify` passes.
-- [ ] SHA-256 checksum published.
+- [ ] SHA-256 checksum published next to the APK.
+- [ ] Release assets uploaded as `beacon.apk` and `beacon.apk.sha256` (or the explicit `BEACON_ANDROID_*` variables updated and redeployed).
+- [ ] `/api/app/update` returns `enabled: true`, the new `versionName`, and the matching SHA-256. (`sizeBytes` is the asset size for the manifest/GitHub forms and `0` for the explicit-variable form.)
 - [ ] Fresh install pairs, syncs, and survives a reboot.
 - [ ] Upgrade over the previous version keeps the pairing.
+- [ ] Tapping **Install update** on the previous version opens Android's confirmation and installs in place; with unknown-app installation denied, the app opens the settings page and retries.
 - [ ] Uninstall and reconnect reuses the same device row, keeps history, and restarts tracking without a duplicate.
 - [ ] Lost mode, alarm, lock, and photo request tested on a physical device.
 - [ ] Lost mode blocks settings, sibling devices, fence changes, and self-unpair; tracking, heartbeat, and photo upload still work.
@@ -288,7 +308,7 @@ Use the direct (non-pooler) connection string for `pg_dump` when possible. Test 
 2. Back up the database.
 3. Apply migrations (`npm run db:migrate`).
 4. Deploy.
-5. Check `/api/health`, sign in, and verify a device check-in.
+5. Check `/api/health`, sign in, and verify a device check-in. If in-app updates are enabled, also check `/api/app/update`.
 6. Keep the previous Vercel deployment available for rollback.
 
 Vercel retains previous deployments; “Promote to Production” is the fastest rollback. Database migrations are forward-only, so avoid destructive migrations without a tested restore path.
@@ -327,5 +347,8 @@ If you outgrow these, the first upgrade should be Neon storage and a paid Vercel
 | Map is blank | CSP or style URL blocked | Check the browser console; keep OpenFreeMap in `connect-src` |
 | Photos list empty after capture | Command expired, upload failed, or app in background | Check the Commands tab and Android notification |
 | Offline alerts late | Hobby cron cadence | Add an external 5–15 minute scheduler |
+| `/api/app/update` returns `enabled:false` | No update source configured, or the upstream manifest, assets, or checksum could not be parsed | Set the update variables; confirm the GitHub assets are named `beacon.apk` and `beacon.apk.sha256` and the hash is 64 hex characters |
+| The app still offers the previous version | The public response is cached for 300 s and the upstream manifest for 900 s | Wait up to 15 minutes, or redeploy after changing the explicit variables |
+| Update download fails its integrity check | The APK and `.sha256` asset do not match, or the APK was rebuilt without re-uploading both | Regenerate the checksum, replace both assets, and retest |
 
 For incidents and key rotation, see [OPERATIONS.md](OPERATIONS.md).

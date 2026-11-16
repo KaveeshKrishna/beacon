@@ -42,7 +42,7 @@ Errors:
 
 `details` is optional. For validation failures it is an array of `{ "path": "...", "message": "..." }`. Error messages are written for humans and may change; branch on `code` and HTTP status, not on message text.
 
-All API responses set `Cache-Control: no-store, max-age=0` and `Pragma: no-cache`, except the two health endpoints. Photo bytes and exports set additional download/cache headers.
+All API responses set `Cache-Control: no-store, max-age=0` and `Pragma: no-cache`, except the two health endpoints and `GET /api/app/update`, which use their own cache headers. Photo bytes and exports set additional download/cache headers.
 
 ### Content types and limits
 
@@ -1041,7 +1041,37 @@ Readiness probe. Executes `select 1` against Postgres.
 { "status": "ok", "service": "beacon", "time": "2026-10-23T14:10:00.000Z" }
 ```
 
-Returns `503` with `{ "status": "degraded", "service": "beacon" }` if the database is unreachable. These two endpoints deliberately do not use the `{ ok, data }` envelope.
+Returns `503` with `{ "status": "degraded", "service": "beacon" }` if the database is unreachable. The health endpoints deliberately do not use the `{ ok, data }` envelope.
+
+### `GET /api/app/update`
+
+Public update manifest used by the Android app. No authentication is required.
+
+When no update source is configured, or the upstream manifest cannot be fetched or parsed, the route returns `200` with updates disabled:
+
+```json
+{ "ok": true, "data": { "enabled": false } }
+```
+
+When configured:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "enabled": true,
+    "versionName": "0.1.8",
+    "apkUrl": "https://github.com/example/beacon/releases/download/v0.1.8/beacon.apk",
+    "sha256": "e246372760eeb1a8c89f551668ae955943cc6112953bc952e17b24d2effa9d5c",
+    "sizeBytes": 24959555,
+    "notes": "Release notes..."
+  }
+}
+```
+
+`BEACON_ANDROID_UPDATE_MANIFEST_URL` may point at a simple `{ versionName, apkUrl, sha256, sizeBytes?, notes? }` document or a GitHub `releases/latest` response. In the simple form, an omitted `sizeBytes` is reported as `0` and omitted `notes` as an empty string. In the GitHub form the server reads the `beacon.apk` and `beacon.apk.sha256` release assets. The explicit `BEACON_ANDROID_VERSION`, `BEACON_ANDROID_APK_URL`, and `BEACON_ANDROID_APK_SHA256` triple is used only when the manifest URL is unset; that form reports `sizeBytes: 0` and empty `notes`. If the manifest URL is set but the upstream fetch or parse fails, the route returns `enabled: false` rather than falling back to the explicit triple.
+
+The route accepts only HTTPS URLs, caps the manifest at 256 KB, caps `sizeBytes` at 250 MB, and truncates notes to 2,000 characters. Responses are cached for 300 seconds (`public, max-age=300, s-maxage=300, stale-while-revalidate=600`), and the upstream manifest and checksum file are cached for 900 seconds. After replacing a release asset, allow up to 15 minutes for the public response to change. Network failures, timeouts, and malformed manifests degrade to `enabled: false` rather than an error status.
 
 ### `GET|POST /api/cron/maintenance`
 

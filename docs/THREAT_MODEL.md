@@ -26,6 +26,7 @@ This document describes what Beacon protects, who it protects against, and where
 | Device metadata | Medium | Model, Android version, battery, network, SIM state |
 | Audit trail | Medium | `audit_logs`, hashed IP and user agent |
 | Configuration secrets | Critical | Vercel environment variables; never in the repo |
+| App update package | High | Downloaded over HTTPS; SHA-256, package name, version name, and signing certificate verified before the `PackageInstaller` session |
 
 ---
 
@@ -43,7 +44,7 @@ Has the unlocked or locked phone, may remove the SIM, may reboot it, may not kno
 
 Can observe or modify traffic between the phone/browser and the server.
 
-**Mitigations:** TLS everywhere, HSTS, HTTPS-only Android client, redirect rejection, no userinfo in server URLs, strict CSP, no third-party scripts, `no-store` on sensitive responses, session cookies with `Secure`/`HttpOnly`/`SameSite`.
+**Mitigations:** TLS everywhere, HSTS, HTTPS-only Android client, redirect rejection, no userinfo in server URLs, strict CSP, no third-party scripts, `no-store` on sensitive responses, session cookies with `Secure`/`HttpOnly`/`SameSite`. The in-app updater does not rely on transport alone: it checks the downloaded APK's SHA-256, package name, version name, and signing certificate before opening a `PackageInstaller` session.
 
 **Residual:** a compromised system CA, or a rooted device with a modified trust store, can still intercept TLS. User-installed CAs are not trusted because the app trusts system CAs only. Certificate pinning is not implemented because it would complicate self-hosting and rotation.
 
@@ -221,6 +222,7 @@ These are known and accepted for `v0.1.8`:
 20. **Reconnect uses a custom scheme.** Another app can register `beacon://reconnected` and receive the code. PKCE, the install-hash check, and the app-side `state` comparison prevent exchange, but the legitimate app may miss the callback. Reconnect codes expire after 10 minutes and pending app state after 15 minutes.
 21. **Fence alerts are faster, not instant.** The opt-out watcher needs a visible foreground service and a usable fix. Doze, OEM task killers, indoor GPS, and the upload itself can each add time. With the watcher off or refused, detection returns to the check-in interval.
 22. **Revocation waits for the next request.** A revoked browser or mobile session keeps whatever it has already loaded until it reaches the server. The dashboard heartbeat narrows this to about 30 seconds only while a tab is open; a closed tab is rejected on its next request.
+23. **The update manifest is unauthenticated.** Anyone who controls the paired server or its upstream manifest can suppress updates or advertise a different release. The app will only accept a higher version with the same package name and signing certificate, so a server compromise cannot install a differently signed app, but it can withhold a security update. Keep the signing key offline and publish checksums independently.
 
 ---
 
@@ -252,6 +254,7 @@ Use this before exposing an instance to the public internet:
 - [ ] Relay/Resend domains are verified; SPF, DKIM, and DMARC are configured.
 - [ ] Cron is protected and scheduled at least every 15 minutes.
 - [ ] Database backups are enabled and restore-tested.
+- [ ] If in-app updates are enabled, the manifest points at the intended signed APK and its matching checksum.
 - [ ] Neon and Vercel access is limited to the operator, with MFA enabled on both.
 - [ ] No `.env`, keystore, `local.properties`, or personal notes are tracked.
 - [ ] Release APK is signed with a key that is not in the repository.
