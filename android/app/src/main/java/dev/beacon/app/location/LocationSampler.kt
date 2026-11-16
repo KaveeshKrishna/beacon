@@ -50,14 +50,58 @@ class LocationSampler(
             }
         }
 
-        val fresh = requestCurrent(
-            manager = manager,
-            providers = providers,
-            lowPower = !highAccuracy,
-        )
+        val fresh = if (highAccuracy) {
+            requestCurrent(
+                manager = manager,
+                providers = providers,
+                targetAccuracy = HIGH_ACCURACY_M,
+                timeoutMs = HIGH_ACCURACY_TIMEOUT_MS,
+            )
+        } else {
+            collectLowPower(manager, providers)
+        }
         val best = listOfNotNull(fresh, lastKnown)
             .minByOrNull { location -> quality(location) }
         return best?.let(::toPoint)
+    }
+
+    /**
+     * Cheap check-in: ask the network provider first and give it seven seconds.
+     * GPS is only started when that did not produce an acceptable fix, so a
+     * phone with good Wi-Fi or cell coverage never powers the GPS receiver for
+     * a routine check-in.
+     */
+    private suspend fun collectLowPower(
+        manager: LocationManager,
+        providers: List<String>,
+    ): Location? {
+        val networkProviders = providers.filter {
+            it == LocationManager.NETWORK_PROVIDER || it == LocationManager.PASSIVE_PROVIDER
+        }
+        val network = if (networkProviders.isEmpty()) {
+            null
+        } else {
+            requestCurrent(
+                manager = manager,
+                providers = networkProviders,
+                targetAccuracy = LOW_POWER_TARGET_M,
+                timeoutMs = LOW_POWER_NETWORK_TIMEOUT_MS,
+            )
+        }
+
+        val networkUsable = network != null &&
+            network.accuracy <= LOW_POWER_TARGET_M &&
+            System.currentTimeMillis() - network.time <= LOW_POWER_MAX_AGE_MS
+        if (networkUsable) return network
+
+        if (!providers.contains(LocationManager.GPS_PROVIDER)) return network
+        val gps = requestCurrent(
+            manager = manager,
+            providers = listOf(LocationManager.GPS_PROVIDER),
+            targetAccuracy = LOW_POWER_TARGET_M,
+            timeoutMs = LOW_POWER_GPS_TIMEOUT_MS,
+        )
+        return listOfNotNull(network, gps).minByOrNull { location -> quality(location) }
     }
 
     fun fromLocation(location: Location): LocationPoint = toPoint(location)
@@ -65,14 +109,13 @@ class LocationSampler(
     private suspend fun requestCurrent(
         manager: LocationManager,
         providers: List<String>,
-        lowPower: Boolean,
+        targetAccuracy: Float,
+        timeoutMs: Long,
     ): Location? = suspendCancellableCoroutine { continuation ->
         val handler = Handler(Looper.getMainLooper())
         val finished = AtomicBoolean(false)
         val listeners = mutableMapOf<String, LocationListener>()
         var best: Location? = null
-        val targetAccuracy = if (lowPower) 150f else 50f
-        val timeoutMs = if (lowPower) 15_000L else 28_000L
 
         fun cleanup() {
             listeners.forEach { (provider, listener) ->
@@ -106,7 +149,7 @@ class LocationSampler(
             override fun onProviderEnabled(provider: String) = Unit
             override fun onProviderDisabled(provider: String) = Unit
 
-            @Deprecated("Deprecated in API 29")
+            @Suppress("OVERRIDE_DEPRECATION")
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
         }
 
@@ -190,4 +233,13 @@ class LocationSampler(
 
     @Suppress("DEPRECATION")
     private fun isMocked(location: Location): Boolean = location.isFromMockProvider
+
+    private companion object {
+        const val HIGH_ACCURACY_M = 50f
+        const val HIGH_ACCURACY_TIMEOUT_MS = 28_000L
+        const val LOW_POWER_TARGET_M = 150f
+        const val LOW_POWER_NETWORK_TIMEOUT_MS = 7_000L
+        const val LOW_POWER_GPS_TIMEOUT_MS = 8_000L
+        const val LOW_POWER_MAX_AGE_MS = 2 * 60_000L
+    }
 }

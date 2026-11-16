@@ -2,7 +2,7 @@
 
 Beacon is honest about what a phone app can and cannot do. This page is the list of things that will not work, may work slowly, or require a decision before you rely on Beacon for a real emergency.
 
-**Read this before deploying.** `v0.1.8` has not had an independent security audit or a physical-device field trial.
+**Read this before deploying.** `v0.1.9` has not had an independent security audit or a physical-device field trial.
 
 ---
 
@@ -39,13 +39,13 @@ Android does not promise exact background schedules.
 - The lost-mode foreground service must show a notification. On Android 13+, denying notification permission hides it from the notification drawer, though Android still lists the running app under **Active apps**. On Android 14+, the owner can dismiss even an ongoing foreground-service notification; that does not stop the service, and Beacon does not fight the dismissal with a re-post loop. The notification returns on the next service start or tracking update.
 - The app does not request exact alarms or hold an indefinite wake lock.
 
-**Practical impact:** outside lost mode, the 15-minute control worker is the usual ceiling for command latency, but Doze and aggressive OEMs can delay it. The in-app check-in card shows the tracking cadence, not the control poll. Lost mode polls every two minutes while its service runs, and the instant-fence watcher polls every five minutes.
+**Practical impact:** outside lost mode, the control worker is the usual ceiling for command latency (15 minutes; 30 minutes on the `low` profile), but Doze and aggressive OEMs can delay it. The in-app check-in card shows the tracking cadence, not the control poll. Lost mode polls every two minutes while its service runs, and the instant-fence watcher polls every five minutes.
 
 GPS is receive-only. It cannot carry commands or uploads, and no app-only Android design can deliver live tracking after the SIM is removed unless Wi-Fi, a hotspot, a replacement SIM, or another data path is available. Beacon does not pretend otherwise: it queues fixes in encrypted storage and flushes them when connectivity returns.
 
 ### No push on Android yet
 
-The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.8` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is planned in [ROADMAP.md](ROADMAP.md), behind the more urgent testing and field-validation work.
+The server can send a Firebase Cloud Messaging data message when a command is created, and it accepts an encrypted FCM token during heartbeat. The Android app in `v0.1.9` does **not** register for FCM or handle the message. Commands therefore rely on periodic sync and the lost-mode poll. Adding Firebase Messaging is planned in [ROADMAP.md](ROADMAP.md), behind the more urgent testing and field-validation work.
 
 ---
 
@@ -79,7 +79,9 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - `Retry-After` from a provider is not honored; there is one fixed 300 ms retry per provider.
 - Offline alerts are evaluated by the maintenance route. On Vercel Hobby that is once a day unless an external scheduler calls it more often.
 - Alert state has cooldowns: offline 24 h, low battery 12 h, SIM change 6 h. A resolved-then-recurring condition may wait for the cooldown.
-- Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event. The default **Instant fence alerts** watcher compares a fix about every two minutes with cached geometry and uploads immediately on a transition, but Android can delay the service, an indoor fix may not move, and the server still needs the upload. With the watcher off or refused, a crossing is seen at the next check-in. The maintenance cron retries a failed geofence email, but only for 24 hours and only while the cron runs.
+- Geofence evaluation is server-side and runs only when a location arrives. A device that stops reporting cannot trigger an exit event. The default **Instant fence alerts** watcher compares a fix about every two minutes with cached geometry and uploads immediately after a confirmed crossing, but Android can delay the service, an indoor fix may not move, and the server still needs the upload. With the watcher off or refused, a crossing is seen at the next check-in. The maintenance cron retries a failed geofence email, but only for 24 hours and only while the cron runs.
+- **Geofence alerts are deliberately debounced.** A fix that is too inaccurate for the fence is ignored, a shallow edge reading only arms a candidate, and the candidate must repeat on the next fix before an event. A 250 m fence with 80 m fixes has roughly a 60 m inside threshold and a 70 m outside threshold; edge jitter inside that band produces no event. The trade-off is latency: an edge crossing can wait for a second fix (about two minutes in watcher mode), while a deep move confirms immediately. Very small fences (50 m) cannot resolve fixes worse than 40 m and will ignore them.
+- Editing a fence's centre or radius clears its confirmed state and watermark. The next accepted fix establishes a baseline without an alert, so the first event after a geometry change is delayed by one fix.
 - The map-based fence editor needs network access for OpenFreeMap tiles. Without tiles the map is blank, though the radius slider and presets still work. The app allows 50 m–5 km; the server accepts any radius in its own validation range.
 - The inside- and outside-fence check-in values are device-local preferences, not account settings. They are not synced to the dashboard and must be set again after an app data wipe. They apply only in Automatic mode and only when at least one fence exists. A one- or two-minute override keeps the foreground service running and costs battery accordingly.
 
@@ -147,7 +149,7 @@ The server can send a Firebase Cloud Messaging data message when a command is cr
 - Android 8.0+ only. iOS and Windows clients do not exist yet.
 - The web dashboard is responsive and installable as a PWA, but it is not a substitute for the Android app: a browser cannot provide continuous background location.
 - The Android UI is English-only and has not had a formal accessibility audit.
-- Android unit tests cover version comparison, geofence distance/bearing and circle geometry, check-in interval arithmetic, and PKCE verification; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
+- Android unit tests cover version comparison, geofence distance/bearing and circle geometry, the shared geofence state machine, check-in interval arithmetic, and PKCE verification; there is no instrumentation suite. CI builds the debug APK; it does not run on a device.
 - The app has been exercised on an API 36 emulator. It has not been tested on a physical handset, across OEM skins, or through a full battery cycle.
 
 ---

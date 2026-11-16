@@ -2,7 +2,7 @@
 
 This roadmap is ordered by risk and user value, not by novelty. Dates are deliberately omitted; a self-hosted security project should not ship a feature to hit a calendar.
 
-`v0.1.8` is a complete, self-hostable vertical slice. It carries the 0.1.7 feature set — independent fence intervals, opt-out instant fence alerts, server-enforced lost mode, per-device app-access revocation, and a 15-minute command poll — and fixes the in-app update installer. The next releases focus on proving it, closing platform gaps, and only then broadening the client surface.
+`v0.1.9` is a complete, self-hostable vertical slice. It carries the 0.1.7 feature set — independent fence intervals, opt-out instant fence alerts, server-enforced lost mode, per-device app-access revocation, and the command poll — and fixes the in-app update installer. It also makes geofence evaluation noise-aware on both the server and the phone, keeps stationary check-ins on cadence, and stops a rejected upload batch from blocking newer history. The next releases focus on proving it, closing platform gaps, and only then broadening the client surface.
 
 ---
 
@@ -38,14 +38,14 @@ This roadmap is ordered by risk and user value, not by novelty. Dates are delibe
 
 ### 3. Expand Android tests
 
-The current JVM suite covers updater version comparison, geofence distance/bearing and circle geometry, check-in interval arithmetic, and PKCE verification.
+The current JVM suite covers updater version comparison, geofence distance/bearing and circle geometry, the shared geofence state machine, check-in interval arithmetic, and PKCE verification.
 
 - Add JVM tests for server URL validation, point serialization, queue pruning, and command mapping.
 - Add Compose UI tests for pairing validation, the permission checklist, lost mode, and photo request.
 - Add a smoke test that installs the debug APK in an emulator and opens the main activity.
 - Run the JVM suite in CI.
 
-**Exit:** `./gradlew :app:testDebugUnitTest` covers those paths and runs in CI; the suite is no longer limited to the four existing test classes.
+**Exit:** `./gradlew :app:testDebugUnitTest` covers those paths and runs in CI; the suite is no longer limited to the existing test classes.
 
 ### 4. Firebase Cloud Messaging
 

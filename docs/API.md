@@ -6,7 +6,7 @@ Beacon exposes a small JSON API over HTTPS. The dashboard and the Android app us
 - **Device routes** (`/api/device/*`) use a per-device bearer token. They do not use cookies or Origin checks. The phone has no account password.
 - **Mobile account routes** (`/api/mobile/*`) use a narrow, short-lived mobile bearer token obtained after a PKCE approval in the browser. They can list the account's devices, read their latest locations, and perform a Tier 1 MFA reset. They cannot issue commands, change settings, or read history.
 
-There is no API version prefix in `v0.1.8`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
+There is no API version prefix in `v0.1.9`. Breaking changes will be called out in [CHANGELOG.md](../CHANGELOG.md); additive fields may appear without notice.
 
 ---
 
@@ -140,7 +140,7 @@ Returns active (non-revoked) devices for the signed-in user, newest activity fir
         "manufacturer": "Google",
         "model": "Pixel 7",
         "androidVersion": "16",
-        "appVersion": "0.1.8",
+        "appVersion": "0.1.9",
         "status": "active",
         "presence": "online",
         "trackingProfile": "balanced",
@@ -504,7 +504,7 @@ Unauthenticated; consumes a pairing code.
   "manufacturer": "Google",
   "model": "Pixel 7",
   "androidVersion": "16",
-  "appVersion": "0.1.8",
+  "appVersion": "0.1.9",
   "installHash": "9f2c...64 lowercase hex characters..."
 }
 ```
@@ -571,7 +571,7 @@ Unauthenticated; the one-time code is the credential. Requires JSON and is rate-
   "verifier": "the PKCE verifier held by the phone",
   "state": "the same state sent to approve",
   "installHash": "9f2c...64 lowercase hex characters...",
-  "appVersion": "0.1.8",
+  "appVersion": "0.1.9",
   "androidVersion": "16"
 }
 ```
@@ -669,7 +669,9 @@ Response:
 
 `accepted` counts new rows returned by the insert. `duplicates` counts rows suppressed by the unique `(device_id, client_point_id)` constraint. `skipped` counts points rejected by timestamp validation. The device may safely delete the batch when the HTTP request succeeds; duplicate uploads are harmless.
 
-Ingest updates `lastSeenAt`, latest battery/network state, clears the offline alert, evaluates geofences after the response, and may send a low-battery alert. Up to eight pending commands are claimed and returned.
+Ingest always updates `lastSeenAt` and clears the offline alert. `lastLocationAt`, battery, charging, and network state only move forward when the newest point in the batch is newer than the last accepted fix, so a late offline batch cannot overwrite current device state. Geofence evaluation runs after the response and only when the batch's newest point was actually inserted; an all-duplicate retry does no fence work. Up to eight pending commands are claimed and returned.
+
+Geofence evaluation is not a raw radius test. A fix whose `accuracyM` is too large for the fence is ignored. A deadband around the radius prevents edge jitter from flipping state. A shallow crossing is recorded as pending and must repeat on a newer fix before an `enter` or `exit` event and email are produced; a deep crossing confirms immediately. The first accepted fix after a fence is created or its geometry changes establishes a baseline without an event. Each fence's `last_fix_at` watermark makes retries and out-of-order `recordedAt` values idempotent.
 
 ### `POST /api/device/heartbeat`
 
@@ -682,7 +684,7 @@ Updates device state without a location fix and claims commands.
   "networkType": "cellular",
   "simState": "READY",
   "fcmToken": "optional-fcm-token",
-  "appVersion": "0.1.8",
+  "appVersion": "0.1.9",
   "androidVersion": "16"
 }
 ```
@@ -964,7 +966,7 @@ Lists active mobile links for the signed-in account:
         "deviceId": "4b0d5a9e-8f11-4d2c-a64e-1f4b7d8c9e01",
         "deviceName": "Pixel 7",
         "device": "Android · Chrome",
-        "userAgent": "Beacon/0.1.8 (Android 16)",
+        "userAgent": "Beacon/0.1.9 (Android 16)",
         "createdAt": "2026-10-16T09:00:00.000Z",
         "lastUsedAt": "2026-10-23T14:10:00.000Z",
         "accessExpiresAt": "2026-10-23T14:25:00.000Z",
@@ -1060,8 +1062,8 @@ When configured:
   "ok": true,
   "data": {
     "enabled": true,
-    "versionName": "0.1.8",
-    "apkUrl": "https://github.com/example/beacon/releases/download/v0.1.8/beacon.apk",
+    "versionName": "0.1.9",
+    "apkUrl": "https://github.com/example/beacon/releases/download/v0.1.9/beacon.apk",
     "sha256": "e246372760eeb1a8c89f551668ae955943cc6112953bc952e17b24d2effa9d5c",
     "sizeBytes": 24959555,
     "notes": "Release notes..."

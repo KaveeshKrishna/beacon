@@ -13,7 +13,7 @@ Beacon handles location history and device control. Security reports are taken s
 | `0.1.x` | Security fixes, best effort |
 | Older | Not supported |
 
-`v0.1.8` is a self-hosted beta. It has not been independently audited. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it for personal safety.
+`v0.1.9` is a self-hosted beta. It has not been independently audited. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it for personal safety.
 
 ---
 
@@ -130,7 +130,7 @@ Use this before exposing an instance to the public internet. It is also linked f
 
 ## Known residual risks
 
-These are accepted for `v0.1.8` and documented rather than hidden:
+These are accepted for `v0.1.9` and documented rather than hidden:
 
 1. No independent audit or penetration test.
 2. No certificate pinning; a compromised system CA, or a rooted device with a modified trust store, can intercept Android traffic. User-installed CAs are not trusted.

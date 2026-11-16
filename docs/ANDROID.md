@@ -123,7 +123,7 @@ WorkManager is inexact. Doze, App Standby, and OEM task killers can delay a run 
 
 A heartbeat is sent at most every 10 minutes, even when the queue still has points. It carries battery level, charging state, network type, SIM state, app version, and Android version. This is what powers offline and low-battery alerts.
 
-When no foreground service runs, a separate 15-minute control worker polls commands, sends a due heartbeat, and checks whether the mobile account link was revoked. It never requests a location fix, so it adds one small HTTPS request per period instead of competing with the check-in cadence.
+When no foreground service runs, a separate control worker polls commands, sends a due heartbeat, and checks whether the mobile account link was revoked. It never requests a location fix, so it adds one small HTTPS request per period instead of competing with the check-in cadence. The period follows the tracking profile: 30 minutes on `low`, 15 minutes on `balanced` and `high`.
 
 ### Lost mode: foreground service
 
@@ -157,9 +157,15 @@ Automatic follows the dashboard profile and, when the server has geofences for t
 
 The check-in card exposes separate **inside fences** and **outside fences** values. Each can **Follow profile** or use a device-local override of 1, 2, 5, 10, 15, 30, 60, or 120 minutes. The overrides apply only in Automatic mode when at least one fence exists, and each is used only in its own geofence state. They never change a fixed check-in interval. The card shows the actual inside and outside values currently in effect, so the schedule is visible rather than implied.
 
-Fences can be created from the dashboard or drawn in the app: **Geofences → Add**. The editor is a full-screen map. Tap the map to move the centre, drag the orange radius handle, or use the slider and presets (50 m–5 km). It creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry also decides the next check-in.
+Fences can be created from the dashboard or drawn in the app: **Geofences → Add**. The editor is a full-screen map. Tap the map to move the centre, drag the orange radius handle, or use the slider and presets (50 m–5 km). It creates the fence through `POST /api/device/geofences` using the device token. The token is scoped to one device, so the app can only list, create, and delete its own fences. The server still performs enter/exit evaluation and notifications on ingest; the app's copy of the geometry also decides the next check-in. Both editors recommend a 150–250 m radius for a home because indoor fixes wander.
 
-**Instant fence alerts** (on by default) keeps a foreground watcher running in Automatic mode when at least one fence exists. It requests a fix about every two minutes with a 50 m displacement filter, compares each fix with the cached geometry on the phone, and uploads immediately on a transition. The same service polls commands every five minutes. This is the app-only way to notice a crossing within minutes without Google Play services; the cost is the required foreground-service notification. Turning it off, refusing the foreground service, or using a fixed interval returns to detection at the next scheduled check-in. New or changed fence geometry resets the baseline, so the first fix after a sync cannot create a false event.
+**Instant fence alerts** (on by default) keeps a foreground watcher running in Automatic mode when at least one fence exists. Its cadence adapts to the cached state:
+
+- Near a fence boundary (within 250 m) or with no baseline yet: a fix every two minutes from GPS and network with a 50 m displacement filter.
+- Deep inside or far outside every fence: a fix every five minutes, network only with a 100 m displacement filter. GPS is used only when the network provider is disabled.
+- Lost mode overrides both with 30-second high-accuracy fixes.
+
+Each fix runs the same state machine as the server: an accuracy gate, a deadband around the radius, two consecutive readings for a shallow crossing, an immediate deep crossing, and a monotonic fix watermark. Only a confirmed crossing triggers an immediate upload and scheduler restart; a pending or deadband reading does not. A once-a-minute ticker requests the configured check-in when it is due and Android has not delivered a location callback, so a stationary phone does not drift off cadence. The same service polls commands every five minutes. This is the app-only way to notice a crossing within minutes without Google Play services; the cost is the required foreground-service notification. Turning it off, refusing the foreground service, or using a fixed interval returns to detection at the next scheduled check-in. New or changed fence geometry resets the baseline, so the first fix after a sync cannot create a false event.
 
 With the watcher off, adaptation is evaluated only when a check-in happens, using the fix just taken. Even with it on, Android can delay the service, an indoor fix may not move, and the server still evaluates the event against the uploaded fix. Fence alerts are faster, not guaranteed instant.
 
@@ -219,7 +225,7 @@ The app then hands the verified bytes to a `PackageInstaller` session and `Updat
 
 ### Location quality
 
-The sampler prefers a recent last-known fix that meets the accuracy target, then requests a fresh fix with a timeout (15 seconds low-power, 28 seconds high-accuracy). It keeps the best available result rather than failing when GPS is unavailable. Mock locations are reported as `isMocked`; the server records the flag but cannot prove a fix is genuine.
+The sampler prefers a recent last-known fix that meets the accuracy target, then requests a fresh fix with a timeout. A routine low-power check-in asks the network provider first for up to seven seconds; GPS is only started for the remaining eight seconds when no acceptable network fix arrived. High-accuracy sampling (lost mode, manual locate, fence editor) waits up to 28 seconds for a 50 m fix. The sampler keeps the best available result rather than failing when GPS is unavailable. Mock locations are reported as `isMocked`; the server records the flag but cannot prove a fix is genuine.
 
 ---
 
@@ -229,9 +235,11 @@ Locations are written to a local SQLite database before any network call.
 
 - Payloads are encrypted individually with an Android Keystore AES-GCM key before insertion.
 - The queue holds at most 5,000 points; the oldest are pruned first.
-- Uploads are ordered by `recorded_at`, up to 200 points per request.
+- Uploads are ordered by `recorded_at`, up to 200 points per request; one sync run flushes up to five batches.
 - A point is deleted only after the server accepts the batch.
 - Failed batches increment an attempt counter and store a truncated error for diagnostics.
+- `400`, `413`, `415`, and `422` are permanent for that batch: the rows are deleted with the server's reason recorded, and newer points continue uploading. `408`, `429`, `5xx`, and network failures stay queued.
+- A fix with the same timestamp, coordinates, and accuracy as the last enqueued fix is not queued again, which avoids filling the queue from repeated `lastKnownLocation` results.
 - Undecryptable or corrupt rows are deleted rather than retried forever.
 - The queue and the Keystore key are cleared on unpair or revocation.
 
@@ -243,7 +251,7 @@ The last known location remains visible in the dashboard while it is inside the 
 
 ## 5. Commands
 
-Commands arrive in the response to a location sync or heartbeat, from the lost-mode two-minute poll, the fence watcher's five-minute poll, or the 15-minute control worker. They expire after 24 hours.
+Commands arrive in the response to a location sync or heartbeat, from the lost-mode two-minute poll, the fence watcher's five-minute poll, or the control worker (15 minutes; 30 on `low`). They expire after 24 hours.
 
 | Command | Behavior | Acknowledged as |
 | --- | --- | --- |
@@ -367,7 +375,7 @@ cd android
 ./gradlew :app:lintRelease
 ```
 
-Unit tests cover version comparison for the in-app updater, geofence distance/bearing and circle geometry, check-in interval arithmetic (including the outside-fence override), and PKCE verification; there is no instrumentation suite yet. The installer handoff itself is verified manually: install an older build, let it download a newer one, tap **Install update**, and complete Android's confirmation. That path cannot be covered by a JVM unit test because it crosses into `PackageInstaller` and the system UI. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
+Unit tests cover version comparison for the in-app updater, geofence distance/bearing and circle geometry, the shared geofence state machine (baseline, jitter deadband, accuracy gate, confirmation, ordering, and idempotence), check-in interval arithmetic (including the outside-fence override), and PKCE verification; there is no instrumentation suite yet. The installer handoff itself is verified manually: install an older build, let it download a newer one, tap **Install update**, and complete Android's confirmation. That path cannot be covered by a JVM unit test because it crosses into `PackageInstaller` and the system UI. Verification is otherwise a build plus a manual pass. A headless emulator is enough to check rendering and permission flows:
 
 ```bash
 adb shell am start -n dev.beacon.app.debug/dev.beacon.app.MainActivity

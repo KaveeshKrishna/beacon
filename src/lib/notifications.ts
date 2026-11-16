@@ -15,7 +15,13 @@ import {
 import { getEnv } from "@/lib/env";
 import { sendTransactionalEmail } from "@/lib/email/send";
 import { formatDateTime } from "@/lib/format";
-import { googleMapsUrl } from "@/lib/geo";
+import { googleMapsUrl, haversineMeters } from "@/lib/geo";
+import {
+  evaluateGeofenceState,
+  type GeofenceDecision,
+  type GeofenceStateSnapshot,
+} from "@/lib/geofence-state";
+import { logger } from "@/lib/logger";
 
 type AlertField = "lowBatteryAt" | "offlineAt" | "simChangeAt";
 
@@ -59,9 +65,9 @@ function dashboardUrl(deviceId: string): string {
 export async function evaluateGeofences(input: {
   deviceId: string;
   deviceName: string;
-  userId: string;
   latitude: number;
   longitude: number;
+  accuracyM: number;
   recordedAt: Date;
   locationId: number | null;
 }): Promise<void> {
@@ -73,37 +79,37 @@ export async function evaluateGeofences(input: {
     .where(eq(geofences.deviceId, input.deviceId));
 
   for (const { geofence, user } of rows) {
-    const inside = isInside(
+    const decision = await claimGeofenceDecision(
+      geofence,
       input.latitude,
       input.longitude,
-      geofence.centerLat,
-      geofence.centerLon,
-      geofence.radiusM,
+      input.accuracyM,
+      input.recordedAt,
     );
+    if (!decision || decision.transition === null) continue;
 
-    if (geofence.lastInside === inside) continue;
+    const inside = decision.transition === "enter";
+    const type = decision.transition;
 
-    await db()
-      .update(geofences)
-      .set({ lastInside: inside, updatedAt: new Date() })
-      .where(eq(geofences.id, geofence.id));
-
-    if (geofence.lastInside === null) {
-      // The first observation establishes the baseline; it should not alert.
-      continue;
-    }
-
-    const type = inside ? "enter" : "exit";
-    const [event] = await db()
-      .insert(geofenceEvents)
-      .values({
+    let eventId: number | null = null;
+    try {
+      const [event] = await db()
+        .insert(geofenceEvents)
+        .values({
+          geofenceId: geofence.id,
+          deviceId: input.deviceId,
+          type,
+          occurredAt: input.recordedAt,
+          locationId: input.locationId,
+        })
+        .returning({ id: geofenceEvents.id });
+      eventId = event?.id ?? null;
+    } catch (error) {
+      logger.warn("geofence", "Could not record geofence event", {
         geofenceId: geofence.id,
-        deviceId: input.deviceId,
-        type,
-        occurredAt: input.recordedAt,
-        locationId: input.locationId,
-      })
-      .returning({ id: geofenceEvents.id });
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     const notify =
       user.notifyGeofence &&
@@ -128,16 +134,112 @@ export async function evaluateGeofences(input: {
           },
         },
       });
-      if (event) {
+      if (eventId !== null) {
         await db()
           .update(geofenceEvents)
           .set({ notifiedAt: new Date() })
-          .where(eq(geofenceEvents.id, event.id));
+          .where(eq(geofenceEvents.id, eventId));
       }
     } catch {
       // The event remains in the log with notified_at = null for inspection.
     }
   }
+}
+
+const GEOFENCE_CLAIM_ATTEMPTS = 3;
+
+function snapshotOf(geofence: typeof geofences.$inferSelect): GeofenceStateSnapshot {
+  return {
+    inside: geofence.lastInside,
+    pendingInside: geofence.pendingInside,
+    pendingSince: geofence.pendingSince,
+    lastFixAt: geofence.lastFixAt,
+  };
+}
+
+function sameState(
+  a: GeofenceStateSnapshot,
+  b: GeofenceStateSnapshot,
+): boolean {
+  return (
+    a.inside === b.inside &&
+    a.pendingInside === b.pendingInside &&
+    a.pendingSince?.getTime() === b.pendingSince?.getTime() &&
+    a.lastFixAt?.getTime() === b.lastFixAt?.getTime()
+  );
+}
+
+/**
+ * Moves one fence's state with a compare-and-set update. The update only
+ * matches when the row still holds the state that was evaluated, so two
+ * concurrent `after()` tasks cannot both claim the same transition. A losing
+ * writer reloads and re-evaluates; the new state usually makes its fix stale.
+ * Only the winning writer returns a transition, and therefore inserts an event.
+ */
+async function claimGeofenceDecision(
+  initial: typeof geofences.$inferSelect,
+  latitude: number,
+  longitude: number,
+  accuracyM: number,
+  recordedAt: Date,
+): Promise<GeofenceDecision | null> {
+  let current = snapshotOf(initial);
+
+  for (let attempt = 0; attempt < GEOFENCE_CLAIM_ATTEMPTS; attempt += 1) {
+    const decision = evaluateGeofenceState(current, {
+      distanceM: haversineMeters(
+        { latitude, longitude },
+        { latitude: initial.centerLat, longitude: initial.centerLon },
+      ),
+      accuracyM,
+      recordedAt,
+      radiusM: initial.radiusM,
+    });
+
+    if (sameState(current, decision.state)) return decision;
+
+    const claimed = await db()
+      .update(geofences)
+      .set({
+        lastInside: decision.state.inside,
+        pendingInside: decision.state.pendingInside,
+        pendingSince: decision.state.pendingSince,
+        lastFixAt: decision.state.lastFixAt,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(geofences.id, initial.id),
+          current.lastFixAt
+            ? eq(geofences.lastFixAt, current.lastFixAt)
+            : isNull(geofences.lastFixAt),
+          current.inside === null
+            ? isNull(geofences.lastInside)
+            : eq(geofences.lastInside, current.inside),
+          current.pendingInside === null
+            ? isNull(geofences.pendingInside)
+            : eq(geofences.pendingInside, current.pendingInside),
+        ),
+      )
+      .returning({ id: geofences.id });
+
+    if (claimed.length > 0) return decision;
+
+    const rows = await db()
+      .select()
+      .from(geofences)
+      .where(eq(geofences.id, initial.id))
+      .limit(1);
+    const fresh = rows[0];
+    if (!fresh) return null;
+    current = snapshotOf(fresh);
+  }
+
+  logger.warn("geofence", "Gave up claiming geofence state after conflicts", {
+    geofenceId: initial.id,
+    deviceId: initial.deviceId,
+  });
+  return null;
 }
 
 /**
@@ -229,23 +331,6 @@ export async function retryGeofenceNotifications(): Promise<number> {
   }
 
   return sent;
-}
-
-function isInside(
-  latitude: number,
-  longitude: number,
-  centerLat: number,
-  centerLon: number,
-  radiusM: number,
-): boolean {
-  const dLat = ((centerLat - latitude) * Math.PI) / 180;
-  const dLon = ((centerLon - longitude) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((latitude * Math.PI) / 180) *
-      Math.cos((centerLat * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return 2 * 6_371_008.8 * Math.asin(Math.min(1, Math.sqrt(a))) <= radiusM;
 }
 
 export async function maybeSendLowBatteryAlert(input: {

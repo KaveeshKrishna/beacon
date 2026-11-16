@@ -104,14 +104,26 @@ export async function POST(request: NextRequest) {
       (row) => row.clientPointId === latest.id,
     );
 
+    // A late or retried batch may be older than the last accepted fix. Contact
+    // time always advances, but location-derived telemetry must not move
+    // backwards or an old point would overwrite the current one on the map.
+    const latestRecordedAt = new Date(latest.recordedAt);
+    const newerThanLastFix =
+      !device.lastLocationAt ||
+      latestRecordedAt.getTime() > device.lastLocationAt.getTime();
+
     await db()
       .update(devices)
       .set({
         lastSeenAt: new Date(),
-        lastLocationAt: new Date(latest.recordedAt),
-        batteryLevel: latest.batteryLevel ?? device.batteryLevel,
-        isCharging: latest.isCharging ?? device.isCharging,
-        networkType: latest.networkType ?? device.networkType,
+        ...(newerThanLastFix
+          ? {
+              lastLocationAt: latestRecordedAt,
+              batteryLevel: latest.batteryLevel ?? device.batteryLevel,
+              isCharging: latest.isCharging ?? device.isCharging,
+              networkType: latest.networkType ?? device.networkType,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(devices.id, device.id));
@@ -125,15 +137,17 @@ export async function POST(request: NextRequest) {
       .limit(1);
     const user = userRows[0];
 
-    if (user) {
+    // Nothing new arrived (all duplicates), so no geofence or alert work is
+    // needed. Re-running the same fix is a no-op by design.
+    if (user && latestInserted) {
       const payload = {
         deviceId: device.id,
         deviceName: device.name,
-        userId: user.id,
         latitude: latest.latitude,
         longitude: latest.longitude,
-        recordedAt: new Date(latest.recordedAt),
-        locationId: latestInserted?.id ?? null,
+        accuracyM: latest.accuracyM,
+        recordedAt: latestRecordedAt,
+        locationId: latestInserted.id,
       };
       after(async () => {
         try {
@@ -144,7 +158,7 @@ export async function POST(request: NextRequest) {
             deviceName: device.name,
             batteryLevel: latest.batteryLevel,
             isCharging: latest.isCharging,
-            recordedAt: new Date(latest.recordedAt),
+            recordedAt: latestRecordedAt,
           });
           if (latest.isCharging) {
             await db()

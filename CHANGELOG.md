@@ -6,6 +6,44 @@ Because Beacon handles location data and device control, security-relevant chang
 
 ---
 
+## 0.1.9 — 2026-11-17
+
+### Fixed
+
+- **False geofence enter/exit alerts.** The server no longer treats a single fix as truth. A fix must be accurate enough for the fence size, must move beyond a deadband around the radius, and a shallow edge crossing must be seen twice before it changes state. A 900 m fix can no longer move a 250 m home fence, and indoor jitter across the raw radius produces no event.
+- **Out-of-order and duplicate evaluation.** Each fence now stores the timestamp of the last evaluated fix. A late offline batch, a retried upload, or an older concurrent `after()` task is ignored instead of reversing newer state. State changes use a compare-and-set update, so two concurrent evaluations cannot both insert the same transition.
+- **First observation never alerts.** Creating a fence, editing its geometry, or upgrading to this rule set establishes a baseline instead of looking like a crossing. Geometry edits also clear the pending candidate and the watermark.
+- **Late batches no longer move device telemetry backwards.** `lastLocationAt`, battery, charging, and network state only advance when the batch's newest point is newer than the last accepted fix. `lastSeenAt` still records every contact.
+- **A rejected batch can no longer stall history forever.** HTTP `400`, `413`, `415`, and `422` are treated as permanent for the current batch: the rows are dropped with the server's reason recorded, and newer points continue uploading. `408`, `429`, `5xx`, and network failures remain retryable.
+- **Missed check-ins while stationary.** The foreground service now has a once-a-minute cadence ticker. If Android suppresses location callbacks because the phone has not moved, the ticker requests the documented check-in anyway. The service also runs one immediate sync when it starts.
+- **Duplicate queue rows from `lastKnownLocation`.** A fix with the same timestamp, coordinates, and accuracy as the last enqueued fix is not queued again.
+
+### Changed
+
+- **Adaptive fence watcher.** Near a fence edge (within 250 m of any boundary) or with no baseline, the watcher requests GPS and network fixes every two minutes with a 50 m displacement filter. Deep inside or far outside, it requests network fixes every five minutes with a 100 m displacement filter; GPS is used only when the network provider is unavailable. Lost mode remains 30-second high accuracy.
+- **Staged low-power sampling.** A routine check-in asks the network provider first for up to seven seconds and only starts GPS for the remaining eight seconds when no acceptable network fix arrived. High-accuracy sampling is unchanged.
+- **Profile-based control worker.** The command-only worker polls every 30 minutes on the `low` profile and every 15 minutes on `balanced` and `high`. Command latency on `low` can therefore be up to about 30 minutes, documented in [LIMITATIONS.md](docs/LIMITATIONS.md).
+- **The phone uses the same fence rules as the server.** Pending state, its start time, and the fix watermark are cached next to the confirmed fence id, and a crossing only triggers an immediate upload after confirmation.
+- The web and Android fence editors explain indoor jitter and recommend 150–250 m for a home.
+
+### Added
+
+- `geofences.pending_inside`, `geofences.pending_since`, and `geofences.last_fix_at`.
+- `src/lib/geofence-state.ts` and the matching Android `GeofenceEvaluator` with JVM tests.
+
+### Migration
+
+- Apply `drizzle/0005_old_juggernaut.sql` before deploying this server build. It adds three nullable columns and no indexes; existing rows work unchanged. The first accepted fix after the upgrade establishes a baseline for each fence, so the upgrade itself cannot send an alert.
+- Deploy the server before publishing the APK. A 0.1.8 client keeps working, but only 0.1.9 uploads support the new cadence and queue handling.
+
+### Verification
+
+- Web: `npm run typecheck`, `npm run lint`, `npm test` (70 tests across 10 files), and `npm run build` pass.
+- Android: `:app:testDebugUnitTest` (34 tests), `:app:assembleDebug`, `:app:assembleRelease`, and `:app:lintRelease` pass.
+- Release APK: versionCode 10, versionName 0.1.9, 24,959,555 bytes, SHA-256 `2dfe3e68eb55d699f31a14eb73c489ed2280323f2f260b1ddbf806f5d47360fa`, signed with the existing Beacon certificate (`a2eb5d82…f53df4`). Release builds include `arm64-v8a` and `armeabi-v7a`.
+
+---
+
 ## 0.1.8 — 2026-11-08
 
 ### Fixed

@@ -115,7 +115,7 @@ Encrypts:
 | `devices.fcm_token_enc` | `fcm:<deviceId>` |
 | `device_photos.data_enc` | `photo:<deviceId>` |
 
-AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.8`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
+AES-256-GCM authenticates the context, so a ciphertext cannot be moved between fields. The key must decode to exactly 32 bytes. **There is no built-in rotation command in `v0.1.9`.** Losing the key makes TOTP secrets, SMS numbers, FCM tokens, and photos permanently unreadable; accounts and locations still work.
 
 To rotate:
 
@@ -236,6 +236,39 @@ Beacon is not a covert surveillance product. If an instance is reported as used 
 ---
 
 ## 7. Routine maintenance
+
+### Geofence events are missing or delayed
+
+1. Check the fence row:
+
+   ```sql
+   SELECT id, name, radius_m, last_inside, pending_inside, pending_since,
+          last_fix_at, updated_at
+   FROM geofences
+   WHERE device_id = '<device-uuid>';
+   ```
+
+   `pending_inside` set with an old `pending_since` means the first edge reading arrived but no newer fix confirmed it. A stale `last_fix_at` means no accepted fix reached the fence evaluator.
+
+2. Compare the newest device fix with the fence:
+
+   ```sql
+   SELECT recorded_at, accuracy_m, latitude, longitude
+   FROM locations
+   WHERE device_id = '<device-uuid>'
+   ORDER BY recorded_at DESC
+   LIMIT 5;
+   ```
+
+   A fix is ignored for a fence when `accuracy_m > max(40, min(500, radius_m * 0.5))`. A 250 m fence ignores fixes worse than 125 m; a 50 m fence ignores anything worse than 40 m. If every recent fix is a coarse network fix, the fence cannot move state. Do not "fix" this by loosening the rule; check that the phone has a usable GPS or Wi-Fi fix.
+
+3. A move between `radius - margin` and `radius + margin` is a deadband, where `margin = min(max(accuracy_m * 0.75, 25), radius_m * 0.35)`. Alternating readings inside that band are intentionally ignored. A shallow crossing needs two consecutive fixes; a deep move confirms at once. Expect up to one extra fix of latency near the edge.
+
+4. If the fence was just created or its centre/radius edited, `last_inside`, `pending_inside`, and `last_fix_at` are null and the next accepted fix only establishes a baseline. One more fix is needed before an event can occur.
+
+5. If `geofence_events` has the row but `notified_at` is null, delivery failed. The maintenance cron retries it for 24 hours, at most 50 per run. A rising `geofenceRetries` in the cron response points at the email provider, not at ingest.
+
+6. A device that stops uploading cannot trigger an exit. Check the dashboard's last-seen time and [ANDROID.md](ANDROID.md#check-in-interval-and-geofences) for watcher and scheduling conditions.
 
 ### Weekly
 

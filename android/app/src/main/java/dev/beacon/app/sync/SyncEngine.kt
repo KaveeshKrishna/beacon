@@ -66,7 +66,13 @@ class SyncEngine(
                 null
             }
         }
-        if (point != null) queue.enqueue(point)
+        if (point != null) {
+            val signature = "${point.recordedAt}|${point.latitude}|${point.longitude}|${point.accuracyM}"
+            if (prefs.lastQueuedFixSignature != signature) {
+                queue.enqueue(point)
+                prefs.lastQueuedFixSignature = signature
+            }
+        }
 
         val status = DeviceStatusReader.read(context)
         val hasInternet = DeviceStatusReader.hasInternet(context)
@@ -75,16 +81,24 @@ class SyncEngine(
         var networkFailure = !hasInternet
         var retry = false
         var sentSomething = false
+        var droppedCount = 0
+        var droppedMessage: String? = null
 
         if (hasInternet) {
-            if (queue.count() > 0) {
+            var batches = 0
+            while (queue.count() > 0 && batches < MAX_FLUSH_BATCHES) {
+                batches += 1
                 when (val result = flushQueue(pairing.serverUrl, pairing.token)) {
                     is FlushResult.Success -> {
                         commands += result.commands
-                        config = result.config
+                        if (result.config != null) config = result.config
                         sentSomething = true
                         prefs.lastError = null
                         prefs.lastSyncAt = System.currentTimeMillis()
+                        if (result.dropped > 0) {
+                            droppedCount += result.dropped
+                            droppedMessage = result.message
+                        }
                     }
                     is FlushResult.Failure -> {
                         networkFailure = result.networkFailure
@@ -94,6 +108,7 @@ class SyncEngine(
                             onStateChanged()
                             return Outcome.Stopped
                         }
+                        break
                     }
                 }
             }
@@ -190,6 +205,18 @@ class SyncEngine(
             } else {
                 "Offline. Tracking continues and will sync when the connection returns."
             }
+        } else if (droppedCount > 0) {
+            prefs.lastError = buildString {
+                append(droppedCount)
+                append(" queued point")
+                if (droppedCount != 1) append("s")
+                append(" could not be accepted and were removed")
+                droppedMessage?.takeIf { it.isNotBlank() }?.let {
+                    append(": ")
+                    append(it.take(160))
+                }
+                append('.')
+            }
         }
 
         config?.let { applyConfig(it, point) }
@@ -280,16 +307,39 @@ class SyncEngine(
                 FlushResult.Success(result.value.commands, result.value.config)
             }
             is ApiResult.Failure -> {
-                queue.markAttempt(ids, result.message)
-                FlushResult.Failure(
-                    networkFailure = result.kind == FailureKind.NETWORK,
-                    retry = result.kind == FailureKind.NETWORK ||
-                        result.kind == FailureKind.RATE_LIMITED ||
-                        result.kind == FailureKind.HTTP,
-                    revoked = result.kind == FailureKind.UNAUTHORIZED,
-                )
+                if (isPermanentRejection(result)) {
+                    // One malformed point must not block newer history
+                    // forever. Record the server's reason, drop this batch,
+                    // and let the caller continue with the next one.
+                    queue.delete(ids)
+                    FlushResult.Success(
+                        commands = emptyList(),
+                        config = null,
+                        dropped = ids.size,
+                        message = result.message,
+                    )
+                } else {
+                    queue.markAttempt(ids, result.message)
+                    FlushResult.Failure(
+                        networkFailure = result.kind == FailureKind.NETWORK,
+                        retry = result.kind == FailureKind.NETWORK ||
+                            result.kind == FailureKind.RATE_LIMITED ||
+                            result.kind == FailureKind.HTTP,
+                        revoked = result.kind == FailureKind.UNAUTHORIZED,
+                    )
+                }
             }
         }
+    }
+
+    /**
+     * 408 (timeout), 429 (rate limit), and 5xx are transient. The remaining
+     * 4xx responses mean this exact body will never be accepted, so retaining
+     * it only delays newer points.
+     */
+    private fun isPermanentRejection(result: ApiResult.Failure): Boolean {
+        val status = result.status ?: return false
+        return result.kind == FailureKind.HTTP && status in PERMANENT_REJECTION_STATUSES
     }
 
     private fun applyConfig(config: DeviceConfig, point: LocationPoint?) {
@@ -312,7 +362,12 @@ class SyncEngine(
         val fencesChanged = prefs.geofences != config.geofences
         prefs.geofences = config.geofences
         if (point != null) {
-            prefs.updateGeofenceState(point.latitude, point.longitude)
+            prefs.updateGeofenceState(
+                latitude = point.latitude,
+                longitude = point.longitude,
+                accuracyM = point.accuracyM,
+                recordedAt = point.recordedAt,
+            )
         } else if (fencesChanged) {
             // Without a fix the current fence is unknown. Treat the device as
             // away from all fences so the next check-in is the attentive one.
@@ -341,6 +396,8 @@ class SyncEngine(
         data class Success(
             val commands: List<DeviceCommand>,
             val config: DeviceConfig?,
+            val dropped: Int = 0,
+            val message: String? = null,
         ) : FlushResult
 
         data class Failure(
@@ -353,6 +410,8 @@ class SyncEngine(
     private companion object {
         val mutex = Mutex()
         const val MAX_BATCH = 200
+        const val MAX_FLUSH_BATCHES = 5
         const val HEARTBEAT_INTERVAL_MS = 10 * 60_000L
+        val PERMANENT_REJECTION_STATUSES = setOf(400, 413, 415, 422)
     }
 }

@@ -378,12 +378,9 @@ class AppPreferences(context: Context) {
                 )
             }
             prefs.edit { putString(KEY_GEOFENCES, array.toString()) }
-            if (insideGeofenceId != null && next.none { it.id == insideGeofenceId }) {
-                insideGeofenceId = null
-            }
             // New or altered geometry needs a fresh baseline. Otherwise the
             // first fix after a list refresh could look like a crossing.
-            if (changed) geofenceStateKnown = false
+            if (changed) clearGeofenceState()
         }
 
     var insideGeofenceId: String?
@@ -397,38 +394,98 @@ class AppPreferences(context: Context) {
             geofences.firstOrNull { it.id == id }?.name
         }
 
-    /**
-     * Whether a fix has established an inside/outside baseline. Without one,
-     * the first fix after a fence change must not raise a false transition.
-     */
-    var geofenceStateKnown: Boolean
-        get() = prefs.getBoolean(KEY_GEOFENCE_STATE_KNOWN, false)
-        private set(value) = prefs.edit { putBoolean(KEY_GEOFENCE_STATE_KNOWN, value) }
+    /** Confirmed and pending fence state, including the fix watermark. */
+    val geofenceState: GeofenceState
+        get() = GeofenceState(
+            insideFenceId = insideGeofenceId,
+            pendingInside = when (prefs.getInt(KEY_GEOFENCE_PENDING_INSIDE, -1)) {
+                1 -> true
+                0 -> false
+                else -> null
+            },
+            pendingSince = prefs.getLong(KEY_GEOFENCE_PENDING_SINCE, 0L)
+                .takeIf { it > 0L },
+            lastFixAt = prefs.getLong(KEY_GEOFENCE_LAST_FIX, 0L)
+                .takeIf { it > 0L },
+        )
 
-    /** Re-evaluates the cached fences against a fresh fix. */
-    fun updateGeofenceState(latitude: Double, longitude: Double) {
-        insideGeofenceId = GeofenceMath
-            .containing(geofences, latitude, longitude)
-            ?.id
-        geofenceStateKnown = true
+    private fun saveGeofenceState(state: GeofenceState) {
+        prefs.edit {
+            if (state.insideFenceId == null) {
+                remove(KEY_INSIDE_FENCE)
+            } else {
+                putString(KEY_INSIDE_FENCE, state.insideFenceId)
+            }
+            if (state.pendingInside == null) {
+                remove(KEY_GEOFENCE_PENDING_INSIDE)
+            } else {
+                putInt(KEY_GEOFENCE_PENDING_INSIDE, if (state.pendingInside) 1 else 0)
+            }
+            if (state.pendingSince == null) {
+                remove(KEY_GEOFENCE_PENDING_SINCE)
+            } else {
+                putLong(KEY_GEOFENCE_PENDING_SINCE, state.pendingSince)
+            }
+            if (state.lastFixAt == null) {
+                remove(KEY_GEOFENCE_LAST_FIX)
+            } else {
+                putLong(KEY_GEOFENCE_LAST_FIX, state.lastFixAt)
+            }
+        }
     }
 
     /**
-     * Updates the cached fence state and reports whether this fix crossed a
-     * boundary. The first observation only establishes a baseline.
+     * Establishes or refreshes the cached fence state from a fix without
+     * reporting a crossing. Used when the server config arrives with a fresh
+     * point and right after a fence is created.
      */
-    fun observeGeofence(latitude: Double, longitude: Double): Boolean {
-        val nextId = GeofenceMath.containing(geofences, latitude, longitude)?.id
-        val hadBaseline = geofenceStateKnown
-        val previousId = insideGeofenceId
-        insideGeofenceId = nextId
-        geofenceStateKnown = true
-        return hadBaseline && previousId != nextId
+    @Synchronized
+    fun updateGeofenceState(
+        latitude: Double,
+        longitude: Double,
+        accuracyM: Double,
+        recordedAt: Long,
+    ) {
+        val current = geofenceState
+        val decision = GeofenceEvaluator.evaluate(
+            current = current,
+            fences = geofences,
+            latitude = latitude,
+            longitude = longitude,
+            accuracyM = accuracyM,
+            recordedAt = recordedAt,
+        )
+        if (decision.state != current) saveGeofenceState(decision.state)
     }
 
+    /**
+     * Applies the shared noise rules to a fresh fix. A crossing is returned
+     * only after the state machine confirmed it; pending edge readings do not
+     * trigger an immediate upload.
+     */
+    @Synchronized
+    fun observeGeofence(
+        latitude: Double,
+        longitude: Double,
+        accuracyM: Double,
+        recordedAt: Long,
+    ): GeofenceDecision {
+        val current = geofenceState
+        val decision = GeofenceEvaluator.evaluate(
+            current = current,
+            fences = geofences,
+            latitude = latitude,
+            longitude = longitude,
+            accuracyM = accuracyM,
+            recordedAt = recordedAt,
+        )
+        if (decision.state != current) saveGeofenceState(decision.state)
+        return decision
+    }
+
+    @Synchronized
     fun clearGeofenceState() {
-        insideGeofenceId = null
-        geofenceStateKnown = false
+        saveGeofenceState(GeofenceState())
     }
 
     /**
@@ -439,6 +496,15 @@ class AppPreferences(context: Context) {
     var scheduledIntervalMinutes: Int
         get() = prefs.getInt(KEY_SCHEDULED_INTERVAL, -1)
         set(value) = prefs.edit { putInt(KEY_SCHEDULED_INTERVAL, value) }
+
+    /**
+     * The control-worker period that is currently enqueued. It follows the
+     * tracking profile (30 minutes for `low`, 15 otherwise), so a profile
+     * change must re-enqueue the worker the same way a check-in change does.
+     */
+    var scheduledControlMinutes: Int
+        get() = prefs.getInt(KEY_SCHEDULED_CONTROL, -1)
+        set(value) = prefs.edit { putInt(KEY_SCHEDULED_CONTROL, value) }
 
     /**
      * Screenshots and the recent-apps thumbnail are blocked by default because
@@ -465,6 +531,18 @@ class AppPreferences(context: Context) {
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit { putLong(KEY_LAST_SYNC, value) }
+
+    /**
+     * Signature of the last fix handed to the upload queue. `lastKnownLocation`
+     * can return the same fix on consecutive checks; without this the queue
+     * would fill with byte-identical points.
+     */
+    var lastQueuedFixSignature: String?
+        get() = prefs.getString(KEY_LAST_QUEUED_FIX, null)
+        set(value) = prefs.edit {
+            if (value == null) remove(KEY_LAST_QUEUED_FIX)
+            else putString(KEY_LAST_QUEUED_FIX, value.take(160))
+        }
 
     var lastUpdateCheckAt: Long
         get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
@@ -568,8 +646,11 @@ class AppPreferences(context: Context) {
         const val KEY_OUTSIDE_INTERVAL = "outside_geofence_minutes"
         const val KEY_INSIDE_INTERVAL = "inside_geofence_minutes"
         const val KEY_INSTANT_FENCE_ALERTS = "instant_fence_alerts"
-        const val KEY_GEOFENCE_STATE_KNOWN = "geofence_state_known"
+        const val KEY_GEOFENCE_PENDING_INSIDE = "geofence_pending_inside"
+        const val KEY_GEOFENCE_PENDING_SINCE = "geofence_pending_since"
+        const val KEY_GEOFENCE_LAST_FIX = "geofence_last_fix_at"
         const val KEY_SCHEDULED_INTERVAL = "scheduled_interval_minutes"
+        const val KEY_SCHEDULED_CONTROL = "scheduled_control_minutes"
         const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
         const val KEY_LOCK_ON_SIM_REMOVAL = "lock_on_sim_removal"
         const val KEY_SIM_WAS_READY = "sim_was_ready"
@@ -578,6 +659,7 @@ class AppPreferences(context: Context) {
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         const val KEY_IGNORED_UPDATE = "ignored_update_version"
         const val KEY_LAST_SYNC = "last_sync_at"
+        const val KEY_LAST_QUEUED_FIX = "last_queued_fix_signature"
         const val KEY_LAST_HEARTBEAT = "last_heartbeat_at"
         const val KEY_LAST_SMS = "last_sms_at"
         const val KEY_LAST_ERROR = "last_error"

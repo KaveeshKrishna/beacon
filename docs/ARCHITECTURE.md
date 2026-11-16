@@ -138,16 +138,16 @@ Android SyncEngine
   ├─ POST /api/device/locations { points: [...] }  (max 200, 256 KB)
   │    ├─ validate coordinates, timestamps (10 min future skew, 30 day age)
   │    ├─ sort ascending, insert with ON CONFLICT DO NOTHING
-  │    ├─ update device lastSeen/lastLocation/battery/network
+  │    ├─ update lastSeen; move location/battery/network only for a newer fix
   │    ├─ mark offline alert resolved
   │    ├─ after(): geofences + low-battery notification
   │    └─ claim up to 8 pending commands, return them with runtime config
   └─ delete acknowledged queue rows, then execute returned commands
 ```
 
-`client_point_id` is generated on the phone. Retries after a timeout therefore insert nothing new: the count comes back as `duplicates` and the client still deletes the batch. The queue deletes rows only after a successful HTTP response, so a crash between upload and delete is safe.
+`client_point_id` is generated on the phone. Retries after a timeout therefore insert nothing new: the count comes back as `duplicates` and the client still deletes the batch. The queue deletes rows only after a successful HTTP response, so a crash between upload and delete is safe. A batch whose newest point is a duplicate does no geofence work at all.
 
-Geofence evaluation is server-side on ingest, but the phone keeps an encrypted cache of fence geometry. In Automatic mode with the default **Instant fence alerts**, a foreground watcher compares about every two-minute fix with that cache and uploads on a transition, so the server sees the event without waiting for the next scheduled check-in. If the watcher is off or Android refuses the service, the transition is noticed at the next check-in. The watcher is opt-out because it requires a foreground-service notification.
+Geofence evaluation is server-side on ingest, but the phone keeps an encrypted cache of fence geometry and the same confirmed/pending state. Both sides apply the same rules in `src/lib/geofence-state.ts` and `GeofenceEvaluator`: an accuracy gate, a hysteresis margin around the radius, two consecutive readings for a shallow crossing, an immediate deep crossing, a first-observation baseline, and a monotonic `last_fix_at` watermark. The server claims each state change with a compare-and-set update, so concurrent `after()` tasks cannot both emit the same event. In Automatic mode with the default **Instant fence alerts**, a foreground watcher samples every two minutes near a boundary and uploads immediately after a confirmed crossing, so the server sees the event without waiting for the next scheduled check-in. Deep inside or far outside it samples every five minutes and prefers the network provider. If the watcher is off or Android refuses the service, the transition is noticed at the next check-in. The watcher is opt-out because it requires a foreground-service notification.
 
 ### Command lifecycle
 
@@ -159,8 +159,8 @@ pending ──claim──▶ delivered ──ack──▶ completed
    └──expiry──▶ expired ◀──expiry──┘
 ```
 
-- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.8 Android client does not register a token).
-- The device claims commands on every location upload, heartbeat, and polling cycle. Lost mode polls every two minutes, the instant-fence watcher every five minutes, and a control worker every 15 minutes when no foreground service runs.
+- A dashboard POST inserts the row and calls FCM if a token exists (server-side only; the v0.1.9 Android client does not register a token).
+- The device claims commands on every location upload, heartbeat, and polling cycle. Lost mode polls every two minutes, the instant-fence watcher every five minutes, and a control worker every 15 minutes (30 on the `low` profile) when no foreground service runs.
 - `claimPendingCommands` updates `pending → delivered` in the same transaction window as the read, so two concurrent claims cannot both return the same row in practice.
 - The Android handler returns an ack with `completed`, `failed`, `unsupported`, or `deferred`.
 - Lost-mode status changes immediately in the dashboard; execution is still confirmed by the device. The UI says so explicitly.
@@ -211,7 +211,7 @@ The command is acknowledged by the photo upload, not by the request handler. If 
 | `mobile_link_codes` | Browser-approved phone link | 5-minute TTL, single use |
 | `device_reconnect_codes` | Browser-approved reinstall recovery | 10-minute TTL, single use |
 | `locations` | Breadcrumb history | unique `(device_id, client_point_id)` |
-| `geofences` | Circles with enter/exit flags | `last_inside` caches state |
+| `geofences` | Circles with enter/exit flags | `last_inside`, `pending_inside`, `pending_since`, `last_fix_at` |
 | `geofence_events` | Deduplicated transitions | 180-day retention |
 | `commands` | Remote action queue | 24-hour TTL |
 | `device_photos` | Encrypted JPEG evidence | 20/device, 30-day retention |
@@ -305,7 +305,7 @@ Key design choices:
 - **No DI framework.** `AppContainer` is constructed once in `Application`; workers and services reach it through the application cast. This keeps startup predictable and avoids reflection in release builds.
 - **No Room.** The offline queue is one table with a hand-written `SQLiteOpenHelper`. The payload is already encrypted JSON; an ORM would add code without adding safety.
 - **No Retrofit.** A handful of endpoints and one JSON envelope do not justify the dependency. Timeouts, redirect rejection, and response-size limits are explicit.
-- **Foreground service only when the schedule needs it.** Lost mode, a fixed interval under 15 minutes, or the opt-out instant-fence watcher start the service. A notification is a battery and privacy cost that most users do not need, so WorkManager handles the 15-minute-and-longer baseline and a separate 15-minute control worker covers command latency when no service runs.
+- **Foreground service only when the schedule needs it.** Lost mode, a fixed interval under 15 minutes, or the opt-out instant-fence watcher start the service. A notification is a battery and privacy cost that most users do not need, so WorkManager handles the 15-minute-and-longer baseline and a separate control worker covers command latency when no service runs (15 minutes; 30 on the `low` profile).
 - **State is a snapshot.** `BeaconState` is rebuilt from preferences and the queue count; there is no long-lived in-memory state to drift after process death.
 
 ---

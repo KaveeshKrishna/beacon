@@ -8,7 +8,7 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 [![Next.js](https://img.shields.io/badge/Next.js-15.5-000)](https://nextjs.org)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84)](https://developer.android.com)
 
-> **Status:** `v0.1.8` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
+> **Status:** `v0.1.9` is a complete, self-hostable vertical slice. It has not yet been through an independent security audit. Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before relying on it in a real emergency.
 
 ---
 
@@ -18,10 +18,10 @@ Beacon is designed for the worst day: the phone is lost or stolen, mobile data i
 | --- | --- |
 | Tracking | Foreground service in lost mode, WorkManager baseline otherwise, configurable tracking profiles, mocked-location flagging |
 | Offline | Encrypted SQLite queue (Android Keystore AES-GCM), ordered upload, duplicate-safe ingestion, last-known location preserved across outages |
-| Control | Locate now, ring, lock screen, lost mode, owner message, sync now, photo request; a 15-minute command poll even without the foreground service |
+| Control | Locate now, ring, lock screen, lost mode, owner message, sync now, photo request; profile-based command polling (15 minutes standard, 30 on battery priority) even without the foreground service |
 | Photos | User-mediated camera capture, JPEG validation, AES-256-GCM at rest, per-device cap and 30-day retention |
-| Geofences | Server-side enter/exit evaluation on ingest, deduplicated events, in-app and email notifications, opt-out instant fence alerts, map-drawn circular fences with a draggable radius |
-| Check-in | Automatic adapts inside/outside fences with independent 1–120 minute overrides; fixed 1–120 minute intervals; foreground service under 15 minutes |
+| Geofences | Server-side accuracy-gated enter/exit evaluation with hysteresis and two-fix debouncing, deduplicated events, in-app and email notifications, opt-out instant fence alerts, map-drawn circular fences with a draggable radius |
+| Check-in | Automatic takes 2-minute fixes near fence edges and network-first 5-minute fixes elsewhere, with a once-a-minute cadence ticker; independent 1–120 minute inside/outside overrides and fixed 1–120 minute intervals; foreground service under 15 minutes |
 | Devices | One account with multiple phones; install fingerprint reuses the existing device row after reinstall or re-pair; browser-confirmed reconnect restores tracking without a duplicate; revoke a browser session or one device's app access |
 | Lost mode | Server-enforced read-only device state; live fixes and 2-minute command polls where Android allows the service; the phone cannot read sibling devices, change fences, or unpair itself |
 | SIM resilience | Immediate check-in on SIM-state change; opt-in screen lock on SIM removal; honest documentation that GPS alone cannot carry data after the SIM is removed |
@@ -153,7 +153,7 @@ scripts/               Brand asset generation
 | [docs/EMAIL.md](docs/EMAIL.md) | Relay and Resend setup, priority, failover, logs |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Monitoring, key rotation, incidents, retention |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | What Android and the free stack cannot do |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.8` |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned work after `v0.1.9` |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and security policy |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and review standards |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations and enforcement |
@@ -170,7 +170,7 @@ npm run build
 cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:lintRelease
 ```
 
-The web unit suite covers cryptography, password hashing, TOTP, geofence math, and email provider ordering. The Android JVM suite covers updater version comparison, geofence geometry, check-in interval arithmetic, and PKCE verification. End-to-end API and device flows require a live database; no production credentials are included in this repository.
+The web unit suite covers cryptography, password hashing, TOTP, geofence math and the shared fence state machine, and email provider ordering. The Android JVM suite covers updater version comparison, geofence geometry and state evaluation, check-in interval arithmetic, and PKCE verification. End-to-end API and device flows require a live database; no production credentials are included in this repository.
 
 ## Design
 

@@ -17,7 +17,8 @@ object TrackingScheduler {
     private const val PERIODIC_WORK = "beacon.periodic-sync"
     private const val INITIAL_WORK = "beacon.initial-sync"
     private const val CONTROL_WORK = "beacon.control-poll"
-    private const val CONTROL_INTERVAL_MINUTES = 15L
+    private const val BALANCED_CONTROL_MINUTES = 15L
+    private const val LOW_CONTROL_MINUTES = 30L
 
     /** WorkManager refuses periodic work shorter than this. */
     const val MIN_PERIODIC_MINUTES = 15
@@ -64,7 +65,7 @@ object TrackingScheduler {
                 // still better than nothing. The control worker keeps command
                 // latency at 15 minutes.
                 enqueuePeriodic(context, prefs, maxOf(interval, MIN_PERIODIC_MINUTES))
-                enqueueControl(context)
+                enqueueControl(context, prefs)
             }
             return
         }
@@ -72,7 +73,7 @@ object TrackingScheduler {
         TrackingService.stop(context)
         cancelControl(context)
         enqueuePeriodic(context, prefs, interval)
-        enqueueControl(context)
+        enqueueControl(context, prefs)
     }
 
     private fun enqueuePeriodic(
@@ -112,11 +113,17 @@ object TrackingScheduler {
     /**
      * A command-only poll for devices whose location cadence is 15 minutes or
      * longer. It never asks for a GPS fix; the cost is one small HTTPS request
-     * per period plus the modem wake-up.
+     * per period plus the modem wake-up. A battery-priority profile polls half
+     * as often (30 minutes); balanced and high use 15.
      */
-    private fun enqueueControl(context: Context) {
+    private fun enqueueControl(context: Context, prefs: AppPreferences) {
+        val minutes = if (prefs.trackingProfile == "low") {
+            LOW_CONTROL_MINUTES
+        } else {
+            BALANCED_CONTROL_MINUTES
+        }
         val request = PeriodicWorkRequestBuilder<BeaconControlWorker>(
-            CONTROL_INTERVAL_MINUTES,
+            minutes,
             TimeUnit.MINUTES,
             5,
             TimeUnit.MINUTES,
@@ -127,11 +134,17 @@ object TrackingScheduler {
                 TimeUnit.SECONDS,
             )
             .build()
+        val policy = if (prefs.scheduledControlMinutes.toLong() == minutes) {
+            ExistingPeriodicWorkPolicy.UPDATE
+        } else {
+            ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE
+        }
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             CONTROL_WORK,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            policy,
             request,
         )
+        prefs.scheduledControlMinutes = minutes.toInt()
     }
 
     private fun cancelControl(context: Context) {

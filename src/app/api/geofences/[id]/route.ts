@@ -64,6 +64,9 @@ export async function PATCH(
         notifyOnEnter: input.notifyOnEnter ?? existing.notifyOnEnter,
         notifyOnExit: input.notifyOnExit ?? existing.notifyOnExit,
         lastInside: geometryChanged ? null : existing.lastInside,
+        pendingInside: geometryChanged ? null : existing.pendingInside,
+        pendingSince: geometryChanged ? null : existing.pendingSince,
+        lastFixAt: geometryChanged ? null : existing.lastFixAt,
         updatedAt: new Date(),
       })
       .where(eq(geofences.id, existing.id))

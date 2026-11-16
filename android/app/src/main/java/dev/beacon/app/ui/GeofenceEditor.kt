@@ -235,6 +235,13 @@ fun GeofenceEditor(
                     }
                 }
 
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Indoor fixes wander by tens of metres. Use 150–250 m for a home so edge jitter cannot flip the state. The first fix only sets a baseline; crossings need a consistent reading.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 if (state.error != null) {
                     Spacer(Modifier.height(10.dp))
                     Text(

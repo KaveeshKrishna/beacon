@@ -950,7 +950,12 @@ class BeaconViewModel(application: Application) : AndroidViewModel(application) 
             ) {
                 is ApiResult.Success -> {
                     container.prefs.geofences = container.prefs.geofences + result.value
-                    container.prefs.updateGeofenceState(latitude, longitude)
+                    container.prefs.updateGeofenceState(
+                        latitude = latitude,
+                        longitude = longitude,
+                        accuracyM = _geofence.value.accuracyM ?: 150.0,
+                        recordedAt = System.currentTimeMillis(),
+                    )
                     TrackingScheduler.scheduleFromPreferences(app, container.prefs)
                     TrackingScheduler.syncSoon(app)
                     container.refresh()

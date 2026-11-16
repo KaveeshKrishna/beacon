@@ -412,7 +412,23 @@ export const geofences = pgTable(
     radiusM: integer("radius_m").notNull(),
     notifyOnEnter: boolean("notify_on_enter").notNull().default(true),
     notifyOnExit: boolean("notify_on_exit").notNull().default(true),
+    /**
+     * Confirmed state. `null` means no confident observation has been made
+     * since the fence was created or its geometry changed.
+     */
     lastInside: boolean("last_inside"),
+    /**
+     * A state change seen once but not yet confirmed. Shallow edge readings
+     * need two consecutive consistent fixes before they can alert, which is
+     * what stops indoor GPS jitter from producing enter/exit spam.
+     */
+    pendingInside: boolean("pending_inside"),
+    pendingSince: timestamp("pending_since", { withTimezone: true }),
+    /**
+     * Monotonic watermark. Late-arriving queue batches and concurrent
+     * `after()` evaluations are ignored when they are not newer than this.
+     */
+    lastFixAt: timestamp("last_fix_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

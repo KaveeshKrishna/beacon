@@ -13,7 +13,8 @@ import dev.beacon.app.sync.SyncTrigger
 /**
  * Command and heartbeat poll for devices that are not running the foreground
  * service. It deliberately does not request a location fix, so it can run
- * every 15 minutes without competing with the owner's check-in cadence.
+ * every 15 minutes (30 for the battery-priority profile) without competing
+ * with the owner's check-in cadence.
  */
 class BeaconControlWorker(
     appContext: Context,

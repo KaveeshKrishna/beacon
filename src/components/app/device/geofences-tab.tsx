@@ -217,8 +217,10 @@ export function GeofencesTab({
           <MapPin className="mt-0.5 size-3 shrink-0 text-faint" />
           <p className="text-[10px] leading-4 text-faint">
             The server evaluates every accepted fix, including points uploaded
-            late from the offline queue. The app caches only the fence geometry
-            so it can choose the next check-in interval while offline.
+            late from the offline queue. Accuracy is checked, edge jitter is
+            debounced, and the first fix after a fence is created or moved only
+            establishes a baseline. The app caches the geometry so it can pick
+            a check-in interval while offline.
           </p>
         </div>
       </section>
@@ -255,6 +257,11 @@ export function GeofencesTab({
               value={radius}
             />
           </Field>
+          <p className="-mt-2 text-[10px] leading-4 text-faint">
+            Indoor fixes wander by tens of metres. Use 150–250 m for a home so
+            edge jitter cannot flip the state. The first accepted fix only sets
+            a baseline; crossings are debounced and need a consistent reading.
+          </p>
 
           <div className="grid grid-cols-2 gap-3">
             <Field htmlFor="fence-lat" label="Latitude">

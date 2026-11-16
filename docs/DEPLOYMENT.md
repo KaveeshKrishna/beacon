@@ -1,6 +1,6 @@
 # Deployment
 
-Beacon is designed to run on free infrastructure with no always-on server. The reference stack is **Vercel Hobby + Neon Free + OpenFreeMap**, with optional Relay/Resend for email. Server-side FCM plumbing exists, but the Android client does not register for push in `v0.1.8`.
+Beacon is designed to run on free infrastructure with no always-on server. The reference stack is **Vercel Hobby + Neon Free + OpenFreeMap**, with optional Relay/Resend for email. Server-side FCM plumbing exists, but the Android client does not register for push in `v0.1.9`.
 
 If you change any of these choices, keep three invariants: HTTPS everywhere, a Postgres database with TLS, and a scheduler that can call the maintenance route.
 
@@ -39,6 +39,8 @@ Upgrading to 0.1.6 adds no migrations and no new server environment variables. T
 Upgrading to 0.1.7 also adds no migrations and no new server environment variables. Deploy the server before publishing the APK if you want the lost-mode enforcement and session-liveness routes available to clients on the new version. Existing devices keep working through the same device-token API.
 
 Upgrading to 0.1.8 is a client-only change. It adds no migrations and no new server environment variables. Replace the release assets and let the update endpoint serve the new APK. Devices on 0.1.7 can be offered 0.1.8, but the old `ACTION_VIEW` handoff may fail on newer Android releases; if it does, sideload 0.1.8 manually once. From 0.1.8 onward, **Install update** uses the `PackageInstaller` session and installs in place.
+
+Upgrading to 0.1.9 requires one migration before the new server serves traffic: `drizzle/0005_old_juggernaut.sql`. It adds `geofences.pending_inside`, `pending_since`, and `last_fix_at`, all nullable, and no indexes. Existing fences work unchanged; the first accepted fix after the deploy establishes a baseline instead of sending an alert. There are no new environment variables. Deploy the server first so old clients keep working, then publish the APK; a 0.1.8 client is accepted by the new server but does not get the adaptive watcher or the new queue behaviour.
 
 > **Never point a production `db:push` at a database with real data.** `db:push` is a development convenience and can drop columns. Use `db:migrate` for deployments.
 
@@ -300,7 +302,7 @@ Use the direct (non-pooler) connection string for `pg_dump` when possible. Test 
 
 ### Encryption key
 
-`ENCRYPTION_KEY` is not stored in the database. If you lose it, TOTP secrets, SMS numbers, FCM tokens, and photos become unreadable. Keep at least two offline copies. Rotating it requires a migration that decrypts with the old key and re-encrypts with the new one; there is no built-in rotation command in `v0.1.8` (see [OPERATIONS.md](OPERATIONS.md#4-key-management)).
+`ENCRYPTION_KEY` is not stored in the database. If you lose it, TOTP secrets, SMS numbers, FCM tokens, and photos become unreadable. Keep at least two offline copies. Rotating it requires a migration that decrypts with the old key and re-encrypts with the new one; there is no built-in rotation command in `v0.1.9` (see [OPERATIONS.md](OPERATIONS.md#4-key-management)).
 
 ### Application updates
 
